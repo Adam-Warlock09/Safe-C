@@ -29,17 +29,6 @@ extensions module's input, not ours. Programs written with extensions -
 like the whitepaper's linked-list case study - will not parse until
 the extensions module is integrated.
 
-## History note
-
-The earlier valid tests `10_safec_extensions.safec` and
-`13_case_study.safec` covered SafeC extension grammar inside this
-suite. When my assigned scope was clarified to the **common C-like
-grammar only**, their content was first moved to a separate
-`safec_extensions/` group, and finally removed from the suite
-altogether - the SafeC grammar is a teammate's part, so this suite
-now contains common-grammar tests only. The extension constructs
-were also removed from the common test files (`01`, `05`, `08`), and
-those goldens were regenerated.
 
 ## Adding or changing tests
 
