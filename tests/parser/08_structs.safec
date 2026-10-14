@@ -1,0 +1,28 @@
+/* Struct definitions with plain fields, owning nullable pointer
+   fields, and the two ways of naming a struct type (`Point` and
+   `struct Point`).  Also field access (.), arrow access (->) and
+   address-of in calls. */
+struct Point {
+    int x;
+    int y;
+};
+
+struct Pair {
+    Point a, b;
+    struct Point c;
+    Point* next;
+};
+
+int area(Point* p) {
+    return p->x * p->y;
+}
+
+int main() {
+    Point pt;
+    pt.x = 3;
+    pt.y = 4;
+    Pair pr;
+    pr.a = pt;
+    pr.c.x = pt.x + pr.b.x;
+    return area(&pt);
+}

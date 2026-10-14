@@ -1,0 +1,25 @@
+/* Unary operators (prefix and postfix) and every literal form the
+   lexer produces: decimal/hex int, float (incl. exponent), char
+   (incl. escapes), string, bool. */
+int main() {
+    int dec = 42;
+    int hex = 0x1F;
+    float f1 = 1.5e3f;
+    float f2 = .5;
+    float f3 = 2.;
+    char nl = '\n';
+    char q = 'x';
+    bool on = true, off = false;
+    printf("literal forms\n");
+
+    int a = -hex;
+    int b = +a;
+    int c = ~a;
+    bool d = !on;
+    int e = *(&a);
+    int post = a++;
+    int post2 = b--;
+    int pre = ++c;
+    int pre2 = --b;
+    return - -a;
+}

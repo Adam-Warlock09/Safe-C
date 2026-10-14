@@ -1,0 +1,26 @@
+/* Function definitions: return types, parameters, empty parameter
+   lists in both styles, function bodies, nested calls, and calls used
+   as statements. */
+int add(int a, int b) {
+    return a + b;
+}
+
+void greet() {
+    printf("hello\n");
+}
+
+void log_msg(void) {
+    printf("msg\n");
+}
+
+int twice(int n) {
+    return add(n, n);
+}
+
+int main() {
+    int s = add(1, twice(2));
+    greet();
+    log_msg();
+    s += add(s, 1);
+    return s;
+}

@@ -1,0 +1,13 @@
+/* Arithmetic operators, precedence and associativity.
+   a + b * c   must parse as   a + (b * c)          (not (a+b)*c)
+   a - b - c   must parse as   (a - b) - c          (left assoc)
+   a / b % c * d  must parse as ((a/b) % c) * d     (one level, left assoc) */
+int main() {
+    int a = 6, b = 3, c = 2, d = 8;
+    int r1 = a + b * c;
+    int r2 = (a + b) * c;
+    int r3 = a - b - c;
+    int r4 = a / b % c * d;
+    int r5 = -a + b;
+    return r1 + r2 * (r3 - r4 % r5);
+}

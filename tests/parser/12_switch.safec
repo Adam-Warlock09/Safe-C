@@ -1,0 +1,20 @@
+/* switch / case / default: multi-statement cases, fall-through
+   labels, a block inside a case, and break out of a case. */
+int pick(int code) {
+    switch (code) {
+        case 0:
+            return 10;
+        case 1:
+        case 2: {
+            int doubled = code * 2;
+            return doubled;
+        }
+        default:
+            break;
+    }
+    return -1;
+}
+
+int main() {
+    return pick(1);
+}

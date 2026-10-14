@@ -1,0 +1,22 @@
+/* Array syntax at the parsing level: dimensions in declarations,
+   array parameters, and index expressions.  The lexer already
+   tokenizes '[' / ']' and the whitepaper's bounds-checking goal
+   implies arrays exist in SafeC, so the parser accepts the syntax.
+   What arrays MEAN (layout, bounds) is left to the semantic stage,
+   which does not exist yet. */
+int total(int scores[], int count) {
+    int sum = 0;
+    for (int i = 0; i < count; i = i + 1) {
+        sum = sum + scores[i];
+    }
+    return sum;
+}
+
+int main() {
+    int table[10];
+    int known[3];
+    table[0] = known[0] + table[9];
+    table[1] = table[0] * 2;
+    int t2[2][3];
+    return table[1];
+}

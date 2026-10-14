@@ -1,0 +1,15 @@
+/* Nested blocks, empty statements (';') and an empty block. */
+int main() {
+    int x = 0;
+    {
+        int y = 1;
+        {
+            y = y + x;
+            ;
+        }
+        x = y;
+    }
+    ;
+    { }
+    return x;
+}

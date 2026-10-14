@@ -1,0 +1,9 @@
+# Build artifacts from the Makefile
+safec-parser
+lexer
+lexer.o
+lexer-lib.o
+lex.yy.c
+
+# macOS
+.DS_Store
