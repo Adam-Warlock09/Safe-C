@@ -21,8 +21,8 @@ make test-parser     # or: bash tests/parser/run_tests.sh
    declarations, unknown types, stray labels, duplicate structs.
 
 SafeC extension grammar (`own`, `mut`, `raw`, `?`, `new`, `free`,
-`defer`, `trusted`, `null`, `&mut`) is another team member's part and
-is deliberately not tested here. The parser still rejects extension
+`defer`, `trusted`, `null`, `&mut`) and
+is not tested here. The parser still rejects extension
 keywords with a clear "SafeC extension" error when it meets them
 (see `perr_if_safec_extension` in `src/parser.c`), but that is the
 extensions module's input, not ours. Programs written with extensions -
