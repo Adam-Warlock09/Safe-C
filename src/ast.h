@@ -3,8 +3,8 @@
  *   - empty slots (no init, no else) get AST_ABSENT, not NULL
  *   - lines are 1-based, straight from the lexer
  */
-#ifndef SAFEC_AST_H
-#define SAFEC_AST_H
+#ifndef SAFEC_LEGACY_AST_H
+#define SAFEC_LEGACY_AST_H
 
 #include <stdio.h>
 

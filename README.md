@@ -232,3 +232,46 @@ EOF
 
 (Note: the last enum member must keep its trailing comma in `tokens.h`,
 or the script misses it.)
+
+## Semantic-analysis AST (`src/new_ast.h`)
+
+A header-only C++17 AST for semantic analysis.
+
+- **Hierarchy.** `ASTNode` (holds `loc` and an error bit) splits into
+  `TypeSpec`, `Decl`, `Stmt` and `Expr`. `Program` is the root: it
+  owns the top-level decls in source order plus the `TypeContext`.
+- **`TypeSpec` vs `Type`.** `TypeSpec` is a type *as written*
+  (`own struct Node *? next[4]`), built by the parser. `Type` is what it
+  *means*, filled in by sema. Types are interned in `TypeContext`, so
+  compare them with `==` on the pointer. `PointerType` carries the
+  whitepaper's two axes: `PtrKind` (`Borrow`, `MutBorrow`, `Own`, `Raw`)
+  and `isNullable()` (`T*?`).
+- **`[sema]` fields** (`Expr::type`, `NameExpr::decl`,
+  `MemberExpr::field`, `BreakStmt::target`, ...) are left null by the
+  parser and filled in by semantic analysis.
+- **Error bit.** After reporting an error on a node, call
+  `setInvalid()`; later passes skip invalid nodes instead of piling on
+  follow-on errors.
+- **Diagnostics.** Report through `DiagnosticsEngine`
+  (`error` / `warning` / `note`); `print()` emits
+  `file:line:col: error: msg`. Suppressing warnings or turning them into
+  errors is a setting on the engine, not a diagnostic kind.
+- **Locations.** `loc` is the name for decls, the keyword for
+  statements, and the operator for operator expressions. `col` stays 0
+  until `lexer.l` tracks columns.
+- **Casting.** LLVM-style: `isa<T>`, `dyn_cast<T>`, `cast<T>` on both
+  `ASTNode*` and `Type*`; switch on `kind()` to dispatch.
+- **Shapes worth knowing:**
+  - `int a, *b;` becomes two `VarDecl`s, each with its own `TypeSpec`.
+    At top level they go straight into `Program::decls` with `isGlobal`
+    set; inside a block they go into a `DeclStmt`.
+  - `f(void)` and `f()` both give an empty parameter list.
+  - `case` / `default` sections are owned by their `SwitchStmt`.
+  - Assignments are `AssignExpr`, not `BinaryExpr`, because a plain `=`
+    on an `own` pointer is a move.
+  - Postfix `++` / `--` are `UnaryExpr` with `PostInc` / `PostDec`.
+  - Only sema inserts `ImplicitCastExpr` nodes, for conversions such as
+    int to float, `null` to `T*?`, and reborrowing an `own` pointer.
+- **Open for sema to decide:** which pointer level a qualifier applies
+  to in `own int** p`, and rejecting a qualifier with no pointer
+  (`own int x`). `TypeSpec` records the source as written.
