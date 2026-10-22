@@ -13,6 +13,22 @@ FS      (f|F)
 
 /* parser sets this to 0 to mute the trace; 1 = print like before */
 int safec_lexer_trace = 1;
+
+/* 1-based column of the most recently returned token's start. */
+int safec_lexer_token_column = 1;
+
+/* Column where the next matched lexeme begins. */
+static int safec_lexer_current_column = 1;
+
+/* Run before every lexer rule, including whitespace and comment rules.
+   Record the lexeme's starting column, then advance across its characters. */
+#define YY_USER_ACTION do { \
+    safec_lexer_token_column = safec_lexer_current_column; \
+    for (int i = 0; i < yyleng; ++i) { \
+        if (yytext[i] == '\n') safec_lexer_current_column = 1; \
+        else safec_lexer_current_column++; \
+    } \
+} while (0);
 %}
 
 %%
@@ -137,7 +153,8 @@ int yywrap(void) {
 int main(void) {
     int token;
     while ((token = yylex()) != 0) {
-        if (safec_lexer_trace) printf("TOKEN: %d\n", token);
+        if (safec_lexer_trace)
+            printf("TOKEN: %d, COLUMN: %d\n", token, safec_lexer_token_column);
     }
     return 0;
 }
