@@ -1062,6 +1062,16 @@ public:
 };
 
 // ===================================================================
+// Pointer aliases
+// ===================================================================
+
+using VarDeclPtr     = std::unique_ptr<VarDecl>;
+using ParamDeclPtr   = std::unique_ptr<ParamDecl>;
+using FieldDeclPtr   = std::unique_ptr<FieldDecl>;
+using SwitchCasePtr  = std::unique_ptr<SwitchCase>;
+using CompoundStmtPtr = std::unique_ptr<CompoundStmt>;
+
+// ===================================================================
 // Spelling helpers for diagnostics
 // ===================================================================
 

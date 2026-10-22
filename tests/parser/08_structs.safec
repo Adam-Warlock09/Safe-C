@@ -1,27 +1,27 @@
 /* Struct definitions with plain fields, owning nullable pointer
-   fields, and the two ways of naming a struct type (`Point` and
-   `struct Point`).  Also field access (.), arrow access (->) and
-   address-of in calls. */
+   fields, and struct-typed variables (always spelled with the
+   'struct' keyword).  Also field access (.), arrow access (->)
+   and address-of in calls. */
 struct Point {
     int x;
     int y;
 };
 
 struct Pair {
-    Point a, b;
+    struct Point a, b;
     struct Point c;
-    Point* next;
+    struct Point* next;
 };
 
-int area(Point* p) {
+int area(struct Point* p) {
     return p->x * p->y;
 }
 
 int main() {
-    Point pt;
+    struct Point pt;
     pt.x = 3;
     pt.y = 4;
-    Pair pr;
+    struct Pair pr;
     pr.a = pt;
     pr.c.x = pt.x + pr.b.x;
     return area(&pt);

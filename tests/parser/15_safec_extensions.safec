@@ -1,0 +1,49 @@
+/* SafeC-specific syntax: own/mut/raw, *?, new/free, defer, trusted,
+   null and &mut - the whitepaper's linked-list shape.  Syntax only;
+   what these MEAN is semantic analysis' problem. */
+
+struct Node {
+    int value;
+    own struct Node*? next;
+};
+
+struct List {
+    own struct Node*? head;
+};
+
+void list_push(mut struct List* list, int value) {
+    own struct Node* n = new struct Node;
+    n->value = value;
+    n->next = list->head;
+    list->head = n;
+}
+
+bool list_pop(mut struct List* list, mut int* out_value) {
+    if (list->head == null) return false;
+    own struct Node* n = list->head;
+    list->head = n->next;
+    n->next = null;
+    *out_value = n->value;
+    free(n);
+    return true;
+}
+
+void zero_register(raw int* reg) {
+    trusted {
+        *reg = 0;
+    }
+}
+
+int main() {
+    own int* p = new int;
+    defer free(p);
+    *p = 41;
+
+    struct List list = (struct List){ .head = null };
+    int x;
+    list_push(&mut list, 1);
+    if (list_pop(&mut list, &mut x)) {
+        return *p + x;
+    }
+    return 0;
+}

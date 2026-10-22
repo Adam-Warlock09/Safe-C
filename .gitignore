@@ -4,7 +4,14 @@ lexer
 lexer.o
 lexer-lib.o
 lex.yy.c
+parser.tab.o
+parser.tab.cpp
+parser.tab.hpp
+location.hh
+position.hh
+stack.hh
+main_parser.o
+ast_dump.o
 
 # macOS
-.DS_Store
 .DS_Store

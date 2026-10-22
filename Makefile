@@ -1,4 +1,5 @@
 # SafeC compiler - build file
+# Needs flex, bison 3.x and a C++17 compiler (the parser is C++).
 #
 # Targets:
 #   make            build the safec-parser and the standalone lexer test binary
@@ -8,18 +9,23 @@
 #   make clean      remove build artifacts
 
 CC      = cc
+CXX     = c++
 FLEX    = flex
-CFLAGS  = -std=c11 -Wall -Wextra -O2 -Isrc
-# the Flex-generated file is not warning-clean; don't police it
-LEXCFLAGS = -w -Isrc
-
-SRC  = src/ast.c src/parser.c src/main_parser.c
-HDRS = src/ast.h src/parser.h src/tokens.h
+BISON   = bison
+CFLAGS   = -std=c11 -Wall -Wextra -O2 -Isrc
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -I. -Isrc
+# generated files aren't warning-clean, don't police them
+LEXCFLAGS  = -w -Isrc
+YACCCFLAGS = -w -Isrc -std=c++17
 
 all: safec-parser lexer
 
 lex.yy.c: src/lexer.l src/tokens.h
 	$(FLEX) -o $@ src/lexer.l
+
+# -d also writes parser.tab.hpp (+ location.hh, position.hh, stack.hh)
+parser.tab.cpp parser.tab.hpp: src/parser.y src/tokens.h
+	$(BISON) -d -o parser.tab.cpp src/parser.y
 
 # Two object files from the same generated lexer:
 #   lexer.o      - embedded main() active  (standalone lexer test)
@@ -30,13 +36,22 @@ lexer.o: lex.yy.c
 lexer-lib.o: lex.yy.c
 	$(CC) $(LEXCFLAGS) -DSAFEC_NO_LEXER_MAIN -c -o $@ lex.yy.c
 
+parser.tab.o: parser.tab.cpp
+	$(CXX) $(YACCCFLAGS) -c -o $@ parser.tab.cpp
+
+main_parser.o: src/main_parser.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h
+	$(CXX) $(CXXFLAGS) -c -o $@ src/main_parser.cpp
+
+ast_dump.o: src/ast_dump.cpp src/ast_dump.h src/new_ast.h
+	$(CXX) $(CXXFLAGS) -c -o $@ src/ast_dump.cpp
+
 # Standalone lexer (embedded main() active) - unchanged team behaviour.
 lexer: lexer.o
 	$(CC) -o $@ lexer.o
 
-# Parser build: the driver in src/main_parser.c provides main().
-safec-parser: $(SRC) $(HDRS) lexer-lib.o
-	$(CC) $(CFLAGS) -o $@ lexer-lib.o $(SRC)
+# The parser: grammar + lexer + driver.
+safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o
+	$(CXX) -o $@ parser.tab.o lexer-lib.o main_parser.o ast_dump.o
 
 test-lexer: lexer
 	@echo "== lexer regression test (tests/lexer/test_lexer.safec) =="
@@ -48,6 +63,8 @@ test-parser: safec-parser
 test: test-lexer test-parser
 
 clean:
-	rm -f safec-parser lexer lexer.o lexer-lib.o lex.yy.c
+	rm -f safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
+	      parser.tab.o parser.tab.cpp parser.tab.hpp parser.tab.c parser.tab.h \
+	      location.hh position.hh stack.hh main_parser.o ast_dump.o
 
 .PHONY: all test test-lexer test-parser clean

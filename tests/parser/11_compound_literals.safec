@@ -6,19 +6,19 @@ struct Vec {
     int y;
 };
 
-Vec origin() {
-    return (Vec){ .x = 0, .y = 0 };
+struct Vec origin() {
+    return (struct Vec){ .x = 0, .y = 0 };
 }
 
-Vec unit_x() {
-    return (Vec){ .x = 1, .y = 0 };
+struct Vec unit_x() {
+    return (struct Vec){ .x = 1, .y = 0 };
 }
 
-Vec flipped(int a, int b) {
-    return (Vec){ b, a };
+struct Vec flipped(int a, int b) {
+    return (struct Vec){ b, a };
 }
 
 int main() {
-    Vec v = (Vec){ .y = 2, .x = 1 };
+    struct Vec v = (struct Vec){ .y = 2, .x = 1 };
     return v.x + v.y;
 }

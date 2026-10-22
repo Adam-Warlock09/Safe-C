@@ -6,18 +6,42 @@ A memory-safe C-family language on LLVM — team compilers project.
 
 - `src/lexer.l` — flex lexer (shared, produces the token stream)
 - `src/tokens.h` — token codes
-- `src/parser.y` — **the SafeC grammar for bison** (token numbers synced with `tokens.h`)
-- `src/parser.c` — current handwritten parser (common grammar only, builds the AST)
-- `src/ast.c`, `src/ast.h`, `src/main_parser.c` — AST + parser driver
+- `src/parser.y` — **the SafeC parser: bison (LALR(1)) grammar + actions** building the `new_ast.h` tree; token numbers synced with `tokens.h`
+- `src/main_parser.cpp` — driver + scanner bridge: `safec::yylex` (token decoding), `safec::parseFile()`, the CLI
+- `src/ast_dump.cpp`, `src/ast_dump.h` — AST printer (`--ast`, test goldens)
+- `src/new_ast.h` — C++17 AST (parser output, semantic-analysis input)
+- `src/sema.cpp` — semantic analysis (in progress)
 - `tests/` — lexer and parser tests (`make test`)
-- `docs/safec_grammar.ebnf` — this grammar in EBNF form
 
 ## Build
+
+Requires flex, bison (3.0+, for the C++ skeleton), cc and c++ (C++17).
 
 ```
 make          # safec-parser + standalone lexer
 make test     # lexer regression + parser tests
 ```
+
+## Parser status
+
+The grammar in `src/parser.y` covers the full SafeC language — the
+common C-like core **and** the SafeC extensions (`own`/`mut`/`raw`,
+`*?`, `new`, `free`, `defer`, `trusted`, `null`, `&mut`) — and bison
+reports **zero conflicts**.  Its actions build the complete
+`new_ast.h` tree:
+
+- `safec-parser file.safec` — parse; prints `OK` on success
+- `safec-parser --ast file.safec` — also dump the tree (the format is
+  whatever the goldens in `tests/parser/expected/` show)
+- syntax errors print as `file:line: error: syntax error, unexpected ...`
+  through the `DiagnosticsEngine`, and exit 1.  The grammar has no
+  `error` recovery rules yet, so parsing stops at the first error and
+  the partially built tree leaks — harmless, the process exits.
+- `safec::parseFile(path, diag)` in `src/main_parser.cpp` is the
+  entry point the next stages (sema) should call.
+
+Syntactic checks only: duplicate struct names, unknown struct types,
+etc. are semantic-analysis matters (`docs/SEMA_CHECKLIST.md`).
 
 ## One language change (vs the whitepaper)
 
@@ -35,8 +59,9 @@ grammar LALR(1)-clean — bison reports **zero conflicts**.
 
 ## Grammar (EBNF)
 
-Same as `docs/safec_grammar.ebnf`. Terminals in quotes are lexer
-tokens (`src/tokens.h`); `[ x ]` = optional; `{ x }` = zero or more.
+The grammar implemented by `src/parser.y`.  Terminals in quotes are
+lexer tokens (`src/tokens.h`); `[ x ]` = optional; `{ x }` = zero or
+more.
 
 ```
 program               = { external_declaration } ;
@@ -233,9 +258,15 @@ EOF
 (Note: the last enum member must keep its trailing comma in `tokens.h`,
 or the script misses it.)
 
+The C++ skeleton bison generates keeps these numbers (bison's own
+reserved `error` and "invalid token" kinds move to 256/257), so the
+flex lexer's `tokens.h` codes reach the parser unchanged — the scanner
+bridge in `src/main_parser.cpp` passes them straight through.
+
 ## Semantic-analysis AST (`src/new_ast.h`)
 
-A header-only C++17 AST for semantic analysis.
+A header-only C++17 AST, built by the parser's actions (`src/parser.y`)
+and consumed by semantic analysis (`src/sema.cpp`).
 
 - **Hierarchy.** `ASTNode` (holds `loc` and an error bit) splits into
   `TypeSpec`, `Decl`, `Stmt` and `Expr`. `Program` is the root: it
