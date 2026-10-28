@@ -50,6 +50,8 @@ namespace safec {
             // Context State
             FunctionDecl* currFun = nullptr;
             bool isTrusted = false; // Tracks if traversal is inside a trusted block
+            std::vector<Stmt*> breakStack;
+            std::vector<Stmt*> continueStack;
 
             // Phase 1 : Building Blocks
             const Type* resolveType(TypeSpec* spec, Program& prog);

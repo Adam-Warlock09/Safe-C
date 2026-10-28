@@ -262,6 +262,17 @@ namespace safec {
 				const Type* varType = resolveType(vd->typeSpec.get(), prog);
 				vd->type = varType;
 
+				if (vd->isGlobal && vd->init) {
+					NodeKind k = vd->init->kind();
+					bool isConst = (k == NodeKind::IntLiteral || k == NodeKind::FloatLiteral || 
+									k == NodeKind::CharLiteral || k == NodeKind::StringLiteral || 
+									k == NodeKind::BoolLiteral || k == NodeKind::NullLiteral);
+					if (!isConst) {
+						diag.error(vd->init->loc, "Global initializers must be constants");
+						vd->init->setInvalid();
+					}
+				}
+
 				if (varType && varType->kind() == TypeKind::Builtin && cast<BuiltinType>(varType)->builtinKind() == BuiltinKind::Void) {
 					diag.error(vd->loc, "Variable cannot have void type");
 					vd->setInvalid();
@@ -418,6 +429,7 @@ namespace safec {
 			case NodeKind::ReturnStmt: {
 
 				auto* rs = cast<ReturnStmt>(stmt);
+
 				const Type *retType = cast<FunctionType>(currFun->type)->returnType();
 				bool isVoidFunc = (retType == prog.types.voidType());
 
@@ -438,8 +450,151 @@ namespace safec {
 
 			}
 
+			case NodeKind::ForStmt: {
+
+				auto* fs = cast<ForStmt>(stmt);
+				scope.push(); // For loops have their own scope for the initializer
+
+				if (fs->init) checkStmt(fs->init.get(), prog);
+				if (fs->cond) checkExpr(fs->cond.get(), prog);
+				if (fs->step) checkExpr(fs->step.get(), prog);
+
+				breakStack.push_back(fs);
+				continueStack.push_back(fs);
+
+				checkStmt(fs->body.get(), prog);
+
+				breakStack.pop_back();
+				continueStack.pop_back();
+				scope.pop(); // Pop the for-loop scope
+				break;
+
+			}
+
+			case NodeKind::SwitchStmt: {
+
+				auto* sw = cast<SwitchStmt>(stmt);
+				checkExpr(sw->cond.get(), prog);
+
+				if (sw->cond->type && sw->cond->type->kind() == TypeKind::Builtin) {
+					if (!cast<BuiltinType>(sw->cond->type)->isInteger()) {
+						diag.error(sw->cond->loc, "Switch condition must be an integer type");
+						sw->cond->setInvalid();
+					}
+				}
+
+				scope.push(); // Switch statements have their own scope for case variables
+				breakStack.push_back(sw);
+
+				std::vector<uint64_t> seenCases; // Track case values to detect duplicates
+				bool hasDefault = false;
+
+				for (auto& sc : sw->cases) {
+
+					if (auto* cs = dyn_cast<CaseStmt>(sc.get())) {
+						checkExpr(cs->value.get(), prog);
+						if (!cs->value->isInvalid()) {
+							if (auto* il = dyn_cast<IntLiteral>(cs->value.get())) {
+								uint64_t val = il->value;
+								if (std::find(seenCases.begin(), seenCases.end(), val) != seenCases.end()) {
+									diag.error(cs->loc, "Duplicate case value in switch");
+									cs->setInvalid();
+								} else {
+									seenCases.push_back(val);
+								}
+							} else {
+								diag.error(cs->value->loc, "Case value must be a constant integer");
+								cs->setInvalid();
+							}
+						}
+						for (auto& s : cs->body) {
+							checkStmt(s.get(), prog);
+						}
+					} else if(auto* ds = dyn_cast<DefaultStmt>(sc.get())) {
+						if (hasDefault) {
+							diag.error(ds->loc, "Switch statement can have atmost one default case");
+							ds->setInvalid();
+						}
+						hasDefault = true;
+						for (auto& s : ds->body) {
+							checkStmt(s.get(), prog);
+						}
+					}
+
+				}
+
+				breakStack.pop_back();
+				scope.pop(); // Pop the switch statement scope
+				break;
+
+			}
+
+			case NodeKind::BreakStmt: {
+				
+				auto* bs = cast<BreakStmt>(stmt);
+				if (breakStack.empty()) {
+					diag.error(bs->loc, "Break statement not within a loop or switch");
+					bs->setInvalid();
+				} else {
+					bs->target = breakStack.back();
+				}
+
+				break;
+
+			}
+
+			case NodeKind::ContinueStmt: {
+				
+				auto* cs = cast<ContinueStmt>(stmt);
+				if (continueStack.empty()) {
+					diag.error(cs->loc, "Continue statement not within a loop");
+					cs->setInvalid();
+				} else {
+					cs->target = continueStack.back();
+				}
+
+				break;
+
+			}
+
+			case NodeKind::DeferStmt: {
+
+				auto* ds = cast<DeferStmt>(stmt);
+
+				auto oldBreak = std::move(breakStack);
+				auto oldContinue = std::move(continueStack);
+
+				// Clear stacks so that inner jumps cannot escape the defer block
+				breakStack.clear();
+				continueStack.clear();
+				
+				checkStmt(ds->body.get(), prog);
+				
+				// Restore outer jump targets
+				breakStack = std::move(oldBreak);
+				continueStack = std::move(oldContinue);
+
+				break;
+
+			}
+
+			case NodeKind::TrustedStmt: {
+
+				auto* ts = cast<TrustedStmt>(stmt);
+				bool oldTrusted = isTrusted;
+				isTrusted = true;
+				checkStmt(ts->body.get(), prog);
+				isTrusted = oldTrusted;
+				break;
+
+			}
+
+			case NodeKind::NullStmt:
+				// Nothing to check for null statements
+				break;
+
 			default:
-				break; // For, Switch, Break, Continue, Defer, Trusted, etc are not implemented yet
+				break;
 
 		}
 
@@ -480,17 +635,62 @@ namespace safec {
 			}
 
 			case NodeKind::CallExpr: {
+
+				auto* ce = cast<CallExpr>(expr);
+				checkExpr(ce->callee.get(), prog);
+
+				if (ce->callee->type && ce->callee->type->kind() != TypeKind::Function) {
+					diag.error(ce->loc, "Called object is not a function");
+					ce->setInvalid();
+					break;
+				}
+
+				for (auto& arg : ce->args) {
+					checkExpr(arg.get(), prog);
+				}
+
 				// Route to B's Hook
 				checkCall(cast<CallExpr>(expr));
 				break;
+
 			}
 
 			case NodeKind::MemberExpr: {
+
 				auto* me = cast<MemberExpr>(expr);
 				checkExpr(me->base.get(), prog);
+
+				if (me->base->type && !me->base->isInvalid()) {
+
+					const Type* baseType = me->base->type;
+
+					if (me->isArrow) {
+						if (auto* pt = dyn_cast<PointerType>(baseType)) {
+							baseType = pt->pointee();
+						} else {
+							diag.error(me->base->loc, "Arrow operator '->' used on non-pointer type");
+							me->setInvalid();
+							break;
+						}
+					}
+
+					if (auto* st = dyn_cast<StructType>(baseType)) {
+						if (FieldDecl* fd = st->decl()->findField(me->member)) {
+							me->field = fd;
+							me->type = fd->type;
+							me->category = ValueCategory::LValue; // Struct fields are lvalues
+						} else {
+							diag.error(me->loc, "Unknown field '" + me->member + "' in struct '" + st->decl()->name + "'");
+							me->setInvalid();
+						}
+					}
+
+				}
+
 				// Route to C's Hook
 				checkArrow(me);
 				break;
+
 			}
 
 			default:
