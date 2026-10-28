@@ -48,7 +48,7 @@ namespace safec {
             bool isTrusted = false; // Tracks if traversal is inside a trusted block
 
             // Phase 1 : Building Blocks
-            const Type* resolveType(TypeSpec* spec);
+            const Type* resolveType(TypeSpec* spec, Program& prog);
 
             // Phase 2 : Structural Passes
             void collectGlobals(Program& prog);
