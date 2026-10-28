@@ -60,8 +60,8 @@ namespace safec {
             void resolveSignatures(Program& prog);
             void checkBodies(Program& prog);
 
-            void checkStmt(Stmt* stmt);
-            void checkExpr(Expr* expr);
+            void checkStmt(Stmt* stmt, Program& prog);
+            void checkExpr(Expr* expr, Program& prog);
             
             // Hooks for B (expressions)
             void checkAssignment(AssignExpr* expr);

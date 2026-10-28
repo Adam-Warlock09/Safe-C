@@ -12,7 +12,7 @@ namespace safec {
 		resolveStructFields(prog);
 
 		// Pass 3 : Signatures
-		// resolveSignatures(prog);
+		resolveSignatures(prog);
 
 		// Pass 4 : Bodies
 		// checkBodies(prog);
@@ -194,5 +194,93 @@ namespace safec {
 		}
 
 	}
+
+	void Sema::resolveSignatures(Program& prog) {
+
+		for (auto& decl : prog.decls) {
+
+			if (auto* fd = dyn_cast<FunctionDecl>(decl.get())) {
+
+				if (fd->isInvalid()) continue;
+
+				// Resolve return type
+				const Type* retType = resolveType(fd->returnSpec.get(), prog);
+
+				// Resolve parameter types
+				std::vector<const Type*> paramTypes;
+				std::unordered_map<std::string_view, ParamDecl*> paramNames;
+
+				for (auto& param : fd->params) {
+
+					if (!paramNames.emplace(param->name, param.get()).second) {
+						diag.error(param->loc, "Duplicate parameter name: '" + param->name + "'");
+						param->setInvalid();
+						continue;
+					}
+
+					const Type* pType = resolveType(param->typeSpec.get(), prog);
+					param->type = pType;
+
+
+					if (pType && pType->kind() == TypeKind::Builtin && cast<BuiltinType>(pType)->builtinKind() == BuiltinKind::Void) {
+						diag.error(param->loc, "parameter cannot have void type");
+						param->setInvalid();
+					}
+
+					if (pType) paramTypes.push_back(pType);
+
+				}
+
+				// Verify main() signature constraints
+				if (fd->name == "main") {
+					if (!retType || retType->kind() != TypeKind::Builtin || cast<BuiltinType>(retType)->builtinKind() != BuiltinKind::Int) {
+						diag.error(fd->loc, "main() must return int");
+						fd->setInvalid();
+					}
+					if (!paramTypes.empty()) {
+						diag.error(fd->loc, "main() must not take any arguments (void)");
+						fd->setInvalid();
+					}
+				}
+
+				if (retType && paramTypes.size() == fd->params.size()) {
+					fd->type = prog.types.functionType(retType, std::move(paramTypes));
+				}
+
+			} else if (auto* vd = dyn_cast<VarDecl>(decl.get())) {
+
+				if (vd->isInvalid()) continue;
+
+				// Resolve variable type
+				const Type* varType = resolveType(vd->typeSpec.get(), prog);
+				vd->type = varType;
+
+				if (varType && varType->kind() == TypeKind::Builtin && cast<BuiltinType>(varType)->builtinKind() == BuiltinKind::Void) {
+					diag.error(vd->loc, "variable cannot have void type");
+					vd->setInvalid();
+				}
+
+				// Unsized arrays '[]' are only permitted on parameters
+				if (vd->type && isa<ArrayType>(vd->type)) {
+					const Type* t = vd->type;
+					while (auto* at = dyn_cast<ArrayType>(t)) {
+						if (!at->size().has_value()) {
+							diag.error(vd->loc, "Unsized arrays '[]' are only allowed on function parameters");
+							vd->setInvalid();
+							break;
+						}
+						t = at->element();
+					}
+				}
+
+			}
+
+		}
+
+	}
+
+	
+
+
 
 } // namespace safec
