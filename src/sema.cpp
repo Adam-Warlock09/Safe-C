@@ -6,10 +6,10 @@ namespace safec {
 	void Sema::run(Program& prog) {
 		
 		// Pass 1 : Global Collection
-		// collectGlobals(prog);
+		collectGlobals(prog);
 
 		// Pass 2 : Struct Fields
-		// resolveStructFields(prog);
+		resolveStructFields(prog);
 
 		// Pass 3 : Signatures
 		// resolveSignatures(prog);
@@ -116,6 +116,82 @@ namespace safec {
 
 		spec->resolved = currentType;
 		return currentType;
+
+	}
+
+	void Sema::collectGlobals(Program& prog) {
+
+		scope.push(); // Initialize global scope
+
+		// Functions and global variables share one namespace in SafeC
+		std::unordered_map<std::string_view, Decl*> globalNames;
+
+		for (auto& decl : prog.decls) {
+			if (auto* sd = dyn_cast<StructDecl(decl.get())) {
+				if (!structs.emplace(sd->name, sd).second) {
+					diag.error(sd->loc, "Duplicate struct name: '" + sd->name + "'");;
+					sd->setInvalid();
+				}
+			} else if (auto* fd = dyn_cast<FunctionDecl>(decl.get())) {
+				if (!globalNames.emplace(fd->name, fd).second) {
+					diag.error(fd->loc, "Duplicate global name: '" + fd->name + "'");
+					fd->setInvalid();
+				} else {
+					funs[fd->name] = fd;
+				}
+			} else if (auto* vd = dyn_cast<VarDecl>(decl.get())) {
+				if (!globalNames.emplace(vd->name, vd).second) {
+					diag.error(vd->loc, "Duplicate global name: '" + vd->name + "'");
+					vd->setInvalid();
+				} else {
+					scope.declare(vd);
+				}
+			}
+		}
+
+	}
+
+	void Sema::resolveStructFields(Program& prog) {
+
+		for (auto& decl : prog.decls) {
+
+			if (auto* sd = dyn_cast<StructDecl>(decl.get())) {
+
+				if (sd->isInvalid()) continue;
+
+				std::unordered_map<std::string_view, FieldDecl*> fieldNames;
+
+				for (auto& field : sd->fields) {
+
+					if (!fieldNames.emplace(field->name, field.get()).second) {
+						diag.error(field->loc, "Duplicate field name: '" + field->name + "'");
+						field->setInvalid();
+						continue;
+					}
+
+					field->type = resolveType(field->typeSpec.get(), prog);
+
+					// Reject void fields
+					if (field->type && field->type->kind() == TypeKind::Builtin) {
+						if (cast<BuiltinType>(field->type)->builtinKind() == BuiltinKind::Void) {
+							diag.error(field->loc, "Field type cannot be void");
+							field->setInvalid();
+						}
+					}
+
+					// Check for recursive containment (struct containing itself by value)
+					if (field->type && field->type->kind() == TypeKind::Struct) {
+						if (cast<StructType>(field->type)->decl() == sd) {
+							diag.error(field->loc, "Struct cannot contain itself by value; Use a pointer instead");
+							field->setInvalid();
+						}
+					}
+
+				}
+
+			}
+
+		}
 
 	}
 
