@@ -18,6 +18,10 @@ namespace safec {
             void push() { frames.emplace_back(); }
             void pop() { frames.pop_back(); }
 
+            bool declare(VarDecl* d) {
+                return frames.back().emplace(d->name, d).second;
+            }
+
             VarDecl* lookup(std::string_view name) {
                 for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
                     if (it->count(name)) {
@@ -27,16 +31,16 @@ namespace safec {
                 return nullptr;
             }
 
-    }
+    };
 
     class Sema {
 
         public:
-            explicit Sema(DiagnosticEngine& diag) : diag(diag) {}
+            explicit Sema(DiagnosticsEngine& diag) : diag(diag) {}
             void run(Program& prog);
 
         private:
-            DiagnosticEngine& diag;
+            DiagnosticsEngine& diag;
             Scope scope;
 
             // Global Symbol Tables

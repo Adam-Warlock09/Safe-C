@@ -52,7 +52,7 @@ namespace safec {
 					spec->setInvalid();
 					return nullptr;
 				}
-				currentType = it->second;
+				currentType = types.structType(it->second);
 				break;
 
 			}
@@ -70,7 +70,7 @@ namespace safec {
 			bool isOutermost = (i == spec->pointers.size() - 1);
 			PtrKind pk = PtrKind::Borrow;
 
-			if (outermost) {
+			if (isOutermost) {
 				switch (spec->qualifier) {
 					case PtrQualifier::None:    pk = PtrKind::Borrow; break;
 					case PtrQualifier::Own:     pk = PtrKind::Own; break;
@@ -91,7 +91,7 @@ namespace safec {
 			if (dimExpr) {
 				
 				if (auto* intLit = dyn_cast<IntLiteral>(dimExpr)) {
-					if (intList->value == 0) {
+					if (intLit->value == 0) {
 						diag.error(dimExpr->loc, "Array size must be greater than zero");
 						spec->setInvalid();
 					} else {
@@ -127,7 +127,7 @@ namespace safec {
 		std::unordered_map<std::string_view, Decl*> globalNames;
 
 		for (auto& decl : prog.decls) {
-			if (auto* sd = dyn_cast<StructDecl(decl.get())) {
+			if (auto* sd = dyn_cast<StructDecl>(decl.get())) {
 				if (!structs.emplace(sd->name, sd).second) {
 					diag.error(sd->loc, "Duplicate struct name: '" + sd->name + "'");;
 					sd->setInvalid();
