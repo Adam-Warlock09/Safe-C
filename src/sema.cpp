@@ -537,6 +537,56 @@ void Sema::checkCompoundLiteral(CompoundLiteralExpr* expr) {
     expr->category = ValueCategory::RValue;
 }
 
+void Sema::clearNarrowing(Expr* target) {
+    if (auto* nameExpr = dyn_cast<NameExpr>(target)) {
+        if (nameExpr->decl) {
+            narrowedVars.erase(nameExpr->decl);
+        }
+    }
+}
+
+const Type* Sema::getNarrowedType(ValueDecl* decl, const Type* originalType) {
+    if (!decl) return originalType;
+    auto it = narrowedVars.find(decl);
+    if (it != narrowedVars.end()) {
+        return it->second;
+    }
+    return originalType;
+}
+
+void Sema::applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types) {
+    if (!cond) return;
+
+    auto* bin = dyn_cast<BinaryExpr>(cond);
+    if (!bin) return;
+
+    bool isNe = (bin->op == BinaryOp::Ne);
+    bool isEq = (bin->op == BinaryOp::Eq);
+    if (!isNe && !isEq) return;
+
+    // Narrow on `p != null` in then-branch OR `p == null` in else-branch
+    bool shouldNarrow = (isNe && isTrueBranch) || (isEq && !isTrueBranch);
+    if (!shouldNarrow) return;
+
+    NameExpr* nameExpr = dyn_cast<NameExpr>(bin->lhs.get());
+    bool isNullLit = isa<NullLiteral>(bin->rhs.get());
+
+    if (!nameExpr || !isNullLit) {
+        nameExpr = dyn_cast<NameExpr>(bin->rhs.get());
+        isNullLit = isa<NullLiteral>(bin->lhs.get());
+    }
+
+    if (nameExpr && isNullLit && nameExpr->decl) {
+        const Type* curType = nameExpr->decl->type;
+        if (auto* ptrT = dyn_cast<PointerType>(curType)) {
+            if (ptrT->isNullable()) {
+                const Type* narrowed = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
+                narrowedVars[nameExpr->decl] = narrowed;
+            }
+        }
+    }
+}
+
 void test_phase1_conversions() {
     DiagnosticsEngine diag("test.safec");
     Sema sema(diag);

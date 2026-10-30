@@ -69,7 +69,16 @@ namespace safec {
             void checkBinary(BinaryExpr* expr, TypeContext& types);
             void checkIndex(IndexExpr* expr, TypeContext& types);
             void checkCompoundLiteral(CompoundLiteralExpr* expr);
-            
+            // Phase 4: Basic Flow-Sensitive Narrowing (Person B)
+            void applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types);
+            void clearNarrowing(Expr* target);
+            const Type* getNarrowedType(ValueDecl* decl, const Type* originalType);
+
+        private:
+            std::unordered_map<ValueDecl*, const Type*> narrowedVars;
+
+            // Allow the local test function to access these private hooks
+            friend void test_phase1_conversions();
 
             // Hooks for C
             void checkDeref(Expr* base, SourceLoc loc);
