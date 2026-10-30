@@ -59,10 +59,14 @@ namespace safec {
             void checkStmt(Stmt* stmt);
             void checkExpr(Expr* expr);
             
-            // Hooks for B (expressions)
+            // Phase 2: Expression Minimal Slice (Person B)
             void checkAssignment(AssignExpr* expr);
-            void checkCall(CallExpr* expr);
-            // B will add binary/unary traversal signatures here
+            void checkCall(CallExpr* expr, const FunctionType* fnType);
+            void checkNew(NewExpr* expr, const Type* allocatedType, TypeContext& types);
+            void checkFreeExpr(FreeExpr* expr, TypeContext& types);
+            void checkUnary(UnaryExpr* expr, TypeContext& types);
+            void checkMember(MemberExpr* expr);
+            
 
             // Hooks for C
             void checkDeref(Expr* base, SourceLoc loc);
@@ -70,6 +74,8 @@ namespace safec {
             void checkFree(FreeExpr* e);
             void handleMove(Expr* target, Expr* value, SourceLoc loc);
     };
+
+    void test_phase1_conversions();
 
 } // namespace safec
 

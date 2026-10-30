@@ -115,6 +115,237 @@ bool Sema::coerceToBool(ExprPtr& expr, const TypeContext& types) {
     return false;
 }
 
+void Sema::checkAssignment(AssignExpr* expr) {
+    if (!expr || !expr->target || !expr->value) return;
+
+    clearNarrowing(expr->target.get());
+
+    // 1. Target must be a modifiable lvalue
+    if (!expr->target->isLValue()) {
+        diag.error(expr->loc, "assignment target must be a modifiable lvalue");
+        expr->setInvalid();
+        return;
+    }
+
+    if (isa<ArrayType>(expr->target->type) || isa<FunctionType>(expr->target->type)) {
+        diag.error(expr->loc, "cannot assign to array or function type");
+        expr->setInvalid();
+        return;
+    }
+
+    // 2. Own pointer assignment represents a Move (Hook for C)
+    if (expr->op == AssignOp::Assign) {
+        if (auto* ptrT = dyn_cast<PointerType>(expr->target->type)) {
+            if (ptrT->ptrKind() == PtrKind::Own) {
+                handleMove(expr->target.get(), expr->value.get(), expr->loc);
+            }
+        }
+    }
+
+    // 3. Perform implicit coercion from RHS value to LHS target type
+    if (!coerce(expr->value, expr->target->type)) {
+        expr->setInvalid();
+        return;
+    }
+
+    expr->type = expr->target->type;
+    expr->category = ValueCategory::RValue;
+}
+
+void Sema::checkCall(CallExpr* expr, const FunctionType* fnType) {
+    if (!expr || !fnType) return;
+
+    const auto& params = fnType->params();
+    if (expr->args.size() != params.size()) {
+        diag.error(expr->loc, "call expected " + std::to_string(params.size()) + 
+                              " arguments, but received " + std::to_string(expr->args.size()));
+        expr->setInvalid();
+        return;
+    }
+
+    for (size_t i = 0; i < expr->args.size(); ++i) {
+        if (!coerce(expr->args[i], params[i])) {
+            expr->setInvalid();
+            return;
+        }
+    }
+
+    expr->type = fnType->returnType();
+    expr->category = ValueCategory::RValue;
+}
+
+void Sema::checkNew(NewExpr* expr, const Type* allocatedType, TypeContext& types) {
+    if (!expr || !allocatedType) return;
+
+    if (isa<BuiltinType>(allocatedType) && cast<BuiltinType>(allocatedType)->builtinKind() == BuiltinKind::Void) {
+        diag.error(expr->loc, "cannot allocate 'void' with 'new'");
+        expr->setInvalid();
+        return;
+    }
+
+    expr->type = types.pointerTo(allocatedType, PtrKind::Own, /*nullable=*/false);
+    expr->category = ValueCategory::RValue;
+}
+
+void Sema::checkFreeExpr(FreeExpr* expr, TypeContext& types) {
+    if (!expr || !expr->operand || !expr->operand->type) return;
+
+    auto* ptrT = dyn_cast<PointerType>(expr->operand->type);
+    if (!ptrT || ptrT->ptrKind() != PtrKind::Own || ptrT->isNullable()) {
+        diag.error(expr->loc, "'free' requires a non-nullable owning pointer ('own T*'), found '" + 
+                              typeToString(expr->operand->type) + "'");
+        expr->setInvalid();
+        return;
+    }
+
+    // Hook for Person C
+    checkFree(expr);
+
+    expr->type = types.voidType();
+    expr->category = ValueCategory::RValue;
+}
+
+void Sema::checkUnary(UnaryExpr* expr, TypeContext& types) {
+    if (!expr || !expr->operand || !expr->operand->type) return;
+
+    const Type* opType = expr->operand->type;
+    auto* bType = dyn_cast<BuiltinType>(opType);
+
+    switch (expr->op) {
+    case UnaryOp::AddrOf: {
+        if (!expr->operand->isLValue()) {
+            diag.error(expr->loc, "cannot take address of an rvalue");
+            expr->setInvalid();
+            return;
+        }
+        expr->type = types.pointerTo(opType, PtrKind::Borrow, false);
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    case UnaryOp::AddrOfMut: {
+        if (!expr->operand->isLValue()) {
+            diag.error(expr->loc, "cannot take mutable address of an rvalue");
+            expr->setInvalid();
+            return;
+        }
+        expr->type = types.pointerTo(opType, PtrKind::MutBorrow, false);
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    case UnaryOp::Deref: {
+        auto* ptrT = dyn_cast<PointerType>(opType);
+        if (!ptrT) {
+            diag.error(expr->loc, "cannot dereference non-pointer type '" + typeToString(opType) + "'");
+            expr->setInvalid();
+            return;
+        }
+        if (ptrT->isNullable()) {
+            diag.error(expr->loc, "cannot dereference nullable pointer '" + typeToString(ptrT) + "'; check for null first");
+            expr->setInvalid();
+            return;
+        }
+        checkDeref(expr->operand.get(), expr->loc);
+        expr->type = ptrT->pointee();
+        expr->category = ValueCategory::LValue;
+        break;
+    }
+    case UnaryOp::Plus:
+    case UnaryOp::Minus: {
+        if (!bType || !bType->isArithmetic()) {
+            diag.error(expr->loc, "unary operator requires arithmetic type, found '" + typeToString(opType) + "'");
+            expr->setInvalid();
+            return;
+        }
+        expr->type = (bType->builtinKind() == BuiltinKind::Char) ? types.intType() : opType;
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    case UnaryOp::Not: {
+        if (!coerceToBool(expr->operand, types)) {
+            expr->setInvalid();
+            return;
+        }
+        expr->type = types.boolType();
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    case UnaryOp::BitNot: {
+        if (!bType || !bType->isInteger()) {
+            diag.error(expr->loc, "bitwise not operator '~' requires integer type, found '" + typeToString(opType) + "'");
+            expr->setInvalid();
+            return;
+        }
+        expr->type = (bType->builtinKind() == BuiltinKind::Char || bType->builtinKind() == BuiltinKind::Bool) ? types.intType() : opType;
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    case UnaryOp::PreInc:
+    case UnaryOp::PreDec:
+    case UnaryOp::PostInc:
+    case UnaryOp::PostDec: {
+        if (!expr->operand->isLValue()) {
+            diag.error(expr->loc, "increment/decrement operand must be an lvalue");
+            expr->setInvalid();
+            return;
+        }
+        if (!bType || !bType->isArithmetic()) {
+            diag.error(expr->loc, "increment/decrement operator requires arithmetic lvalue, found '" + typeToString(opType) + "'");
+            expr->setInvalid();
+            return;
+        }
+        expr->type = opType;
+        expr->category = ValueCategory::RValue;
+        break;
+    }
+    }
+}
+
+void Sema::checkMember(MemberExpr* expr) {
+    if (!expr || !expr->base || !expr->base->type) return;
+
+    const StructType* sType = nullptr;
+
+    if (expr->isArrow) {
+        auto* ptrT = dyn_cast<PointerType>(expr->base->type);
+        if (!ptrT) {
+            diag.error(expr->loc, "member access '->' requires pointer type, found '" + typeToString(expr->base->type) + "'");
+            expr->setInvalid();
+            return;
+        }
+        if (ptrT->isNullable()) {
+            diag.error(expr->loc, "cannot use '->' on nullable pointer '" + typeToString(ptrT) + "'; check for null first");
+            expr->setInvalid();
+            return;
+        }
+        sType = dyn_cast<StructType>(ptrT->pointee());
+        checkArrow(expr);
+    } else {
+        sType = dyn_cast<StructType>(expr->base->type);
+    }
+
+    if (!sType || !sType->decl()) {
+        diag.error(expr->loc, "member access '.' requires struct type");
+        expr->setInvalid();
+        return;
+    }
+
+    FieldDecl* field = sType->decl()->findField(expr->member);
+    if (!field) {
+        diag.error(expr->loc, "struct '" + sType->decl()->name + "' has no field named '" + expr->member + "'");
+        expr->setInvalid();
+        return;
+    }
+
+    expr->field = field;
+    expr->type = field->type;
+    expr->category = expr->isArrow ? ValueCategory::LValue : (expr->base->isLValue() ? ValueCategory::LValue : ValueCategory::RValue);
+}
+  
+void Sema::checkDeref(Expr*, SourceLoc) {}
+void Sema::checkArrow(MemberExpr*) {}
+void Sema::checkFree(FreeExpr*) {}
+void Sema::handleMove(Expr*, Expr*, SourceLoc) {}
+
 void test_phase1_conversions() {
     DiagnosticsEngine diag("test.safec");
     Sema sema(diag);
