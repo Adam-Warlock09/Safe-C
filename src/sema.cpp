@@ -346,6 +346,197 @@ void Sema::checkArrow(MemberExpr*) {}
 void Sema::checkFree(FreeExpr*) {}
 void Sema::handleMove(Expr*, Expr*, SourceLoc) {}
 
+void Sema::checkBinary(BinaryExpr* expr, TypeContext& types) {
+    if (!expr || !expr->lhs || !expr->rhs || !expr->lhs->type || !expr->rhs->type) return;
+
+    const Type* lType = expr->lhs->type;
+    const Type* rType = expr->rhs->type;
+
+    // Reject pointer arithmetic outside trusted blocks
+    if (isa<PointerType>(lType) || isa<PointerType>(rType)) {
+        if (expr->op == BinaryOp::Add || expr->op == BinaryOp::Sub) {
+            if (!isTrusted) {
+                diag.error(expr->loc, "pointer arithmetic is not allowed outside 'trusted' blocks");
+                expr->setInvalid();
+                return;
+            }
+        }
+    }
+
+    // Logical Operators (&&, ||)
+    if (expr->isLogical()) {
+        if (!coerceToBool(expr->lhs, types) || !coerceToBool(expr->rhs, types)) {
+            expr->setInvalid();
+            return;
+        }
+        expr->type = types.boolType();
+        expr->category = ValueCategory::RValue;
+        return;
+    }
+
+    // Equality Comparisons (==, !=)
+    if (expr->op == BinaryOp::Eq || expr->op == BinaryOp::Ne) {
+        if (lType == rType) {
+            expr->type = types.boolType();
+            expr->category = ValueCategory::RValue;
+            return;
+        }
+        if (coerce(expr->rhs, lType) || coerce(expr->lhs, rType)) {
+            expr->type = types.boolType();
+            expr->category = ValueCategory::RValue;
+            return;
+        }
+        diag.error(expr->loc, "cannot compare incompatible types '" + typeToString(lType) + "' and '" + typeToString(rType) + "'");
+        expr->setInvalid();
+        return;
+    }
+
+    auto* lB = dyn_cast<BuiltinType>(lType);
+    auto* rB = dyn_cast<BuiltinType>(rType);
+
+    if (!lB || !rB) {
+        diag.error(expr->loc, "binary operator '" + std::string(binaryOpSpelling(expr->op)) + "' requires scalar operands");
+        expr->setInvalid();
+        return;
+    }
+
+    // Relational Comparisons (<, >, <=, >=)
+    if (expr->isComparison()) {
+        if (!lB->isArithmetic() || !rB->isArithmetic()) {
+            diag.error(expr->loc, "relational comparison requires arithmetic operands");
+            expr->setInvalid();
+            return;
+        }
+        const Type* commonType = (lB->builtinKind() == BuiltinKind::Float || rB->builtinKind() == BuiltinKind::Float) ? types.floatType() : types.intType();
+        coerce(expr->lhs, commonType);
+        coerce(expr->rhs, commonType);
+        expr->type = types.boolType();
+        expr->category = ValueCategory::RValue;
+        return;
+    }
+
+    // Bitwise Operators (%, &, |, ^, <<, >>)
+    bool isBitwise = (expr->op == BinaryOp::Mod || expr->op == BinaryOp::BitAnd ||
+                      expr->op == BinaryOp::BitXor || expr->op == BinaryOp::BitOr ||
+                      expr->op == BinaryOp::Shl || expr->op == BinaryOp::Shr);
+
+    if (isBitwise) {
+        if (!lB->isInteger() || !rB->isInteger()) {
+            diag.error(expr->loc, "bitwise operator requires integer operands");
+            expr->setInvalid();
+            return;
+        }
+        coerce(expr->lhs, types.intType());
+        coerce(expr->rhs, types.intType());
+        expr->type = types.intType();
+        expr->category = ValueCategory::RValue;
+        return;
+    }
+
+    // Standard Arithmetic (+, -, *, /)
+    if (!lB->isArithmetic() || !rB->isArithmetic()) {
+        diag.error(expr->loc, "arithmetic operator requires numeric operands");
+        expr->setInvalid();
+        return;
+    }
+
+    const Type* commonType = (lB->builtinKind() == BuiltinKind::Float || rB->builtinKind() == BuiltinKind::Float) ? types.floatType() : types.intType();
+    coerce(expr->lhs, commonType);
+    coerce(expr->rhs, commonType);
+    expr->type = commonType;
+    expr->category = ValueCategory::RValue;
+}
+
+void Sema::checkIndex(IndexExpr* expr, TypeContext& types) {
+    if (!expr || !expr->base || !expr->index || !expr->base->type || !expr->index->type) return;
+
+    auto* arrType = dyn_cast<ArrayType>(expr->base->type);
+    if (!arrType) {
+        if (isa<PointerType>(expr->base->type) && !isTrusted) {
+            diag.error(expr->loc, "pointer indexing is only allowed inside 'trusted' blocks");
+            expr->setInvalid();
+            return;
+        }
+        if (!isa<PointerType>(expr->base->type)) {
+            diag.error(expr->loc, "subscripted value is not an array or pointer");
+            expr->setInvalid();
+            return;
+        }
+    }
+
+    auto* idxB = dyn_cast<BuiltinType>(expr->index->type);
+    if (!idxB || !idxB->isInteger()) {
+        diag.error(expr->loc, "array subscript is not an integer");
+        expr->setInvalid();
+        return;
+    }
+    coerce(expr->index, types.intType());
+
+    // Constant index out-of-bounds check for sized arrays
+    if (arrType && arrType->size().has_value()) {
+        if (auto* lit = dyn_cast<IntLiteral>(expr->index.get())) {
+            if (lit->value >= *arrType->size()) {
+                diag.error(expr->loc, "array index " + std::to_string(lit->value) + " is out of bounds for array of size " + std::to_string(*arrType->size()));
+                expr->setInvalid();
+                return;
+            }
+        }
+    }
+
+    expr->type = arrType ? arrType->element() : cast<PointerType>(expr->base->type)->pointee();
+    expr->category = ValueCategory::LValue;
+}
+
+void Sema::checkCompoundLiteral(CompoundLiteralExpr* expr) {
+    if (!expr || !expr->type) return;
+
+    auto* sType = dyn_cast<StructType>(expr->type);
+    if (!sType || !sType->decl()) {
+        diag.error(expr->loc, "compound literal requires struct type");
+        expr->setInvalid();
+        return;
+    }
+
+    StructDecl* sDecl = sType->decl();
+    std::unordered_map<std::string, bool> initializedFields;
+    unsigned positionalIdx = 0;
+
+    for (auto& init : expr->inits) {
+        FieldDecl* targetField = nullptr;
+
+        if (init.isDesignated()) {
+            targetField = sDecl->findField(init.field);
+            if (!targetField) {
+                diag.error(init.loc, "struct '" + sDecl->name + "' has no field named '" + init.field + "'");
+                expr->setInvalid();
+                return;
+            }
+            if (initializedFields[init.field]) {
+                diag.error(init.loc, "duplicate initialization of field '" + init.field + "'");
+                expr->setInvalid();
+                return;
+            }
+        } else {
+            if (positionalIdx >= sDecl->fields.size()) {
+                diag.error(init.loc, "too many initializers for struct '" + sDecl->name + "'");
+                expr->setInvalid();
+                return;
+            }
+            targetField = sDecl->fields[positionalIdx++].get();
+        }
+
+        init.resolved = targetField;
+        initializedFields[targetField->name] = true;
+
+        if (!coerce(init.value, targetField->type)) {
+            expr->setInvalid();
+            return;
+        }
+    }
+
+    expr->category = ValueCategory::RValue;
+}
+
 void test_phase1_conversions() {
     DiagnosticsEngine diag("test.safec");
     Sema sema(diag);

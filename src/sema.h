@@ -66,6 +66,9 @@ namespace safec {
             void checkFreeExpr(FreeExpr* expr, TypeContext& types);
             void checkUnary(UnaryExpr* expr, TypeContext& types);
             void checkMember(MemberExpr* expr);
+            void checkBinary(BinaryExpr* expr, TypeContext& types);
+            void checkIndex(IndexExpr* expr, TypeContext& types);
+            void checkCompoundLiteral(CompoundLiteralExpr* expr);
             
 
             // Hooks for C
