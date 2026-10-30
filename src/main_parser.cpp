@@ -14,6 +14,7 @@
 #include "ast_dump.h"
 #include "new_ast.h"
 #include "tokens.h"
+#include "sema.h"
 
 // the flex lexer, compiled as C
 extern "C" {
@@ -125,6 +126,8 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
+    safec::test_phase1_conversions();
+    
     const char *file = NULL;
     int dump_ast = 0, trace = 0;
 
