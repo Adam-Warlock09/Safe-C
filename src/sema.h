@@ -8,9 +8,7 @@
 
 namespace safec {
 
-
     class Scope {
-
         private:
             std::vector<std::unordered_map<std::string_view, VarDecl*>> frames;
 
@@ -26,17 +24,19 @@ namespace safec {
                 }
                 return nullptr;
             }
-
-    }
+    };
 
     class Sema {
-
         public:
-            explicit Sema(DiagnosticEngine& diag) : diag(diag) {}
+            explicit Sema(DiagnosticsEngine& diag) : diag(diag) {}
             void run(Program& prog);
 
+            // Phase 1 : Type Coercion & Conversion Engine (Person B)
+            bool coerce(ExprPtr& expr, const Type* targetType);
+            bool coerceToBool(ExprPtr& expr, const TypeContext& types);
+
         private:
-            DiagnosticEngine& diag;
+            DiagnosticsEngine& diag;
             Scope scope;
 
             // Global Symbol Tables
@@ -45,7 +45,7 @@ namespace safec {
 
             // Context State
             FunctionDecl* currFun = nullptr;
-            bool isTrusted = false; // Tracks if traversal is inside a trusted block
+            bool isTrusted = false;
 
             // Phase 1 : Building Blocks
             const Type* resolveType(TypeSpec* spec);
@@ -68,9 +68,7 @@ namespace safec {
             void checkDeref(Expr* base, SourceLoc loc);
             void checkArrow(MemberExpr* e);
             void checkFree(FreeExpr* e);
-            void handleMove(Expr* target, Expr* value, SourceLoc loc); // Assignment moves
-
-
+            void handleMove(Expr* target, Expr* value, SourceLoc loc);
     };
 
 } // namespace safec
