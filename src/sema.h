@@ -9,12 +9,23 @@
 namespace safec {
 
     class Scope {
+        
         private:
             std::vector<std::unordered_map<std::string_view, VarDecl*>> frames;
 
         public :
             void push() { frames.emplace_back(); }
             void pop() { frames.pop_back(); }
+
+            bool declare(VarDecl* d) {
+                return frames.back().emplace(d->name, d).second;
+            }
+
+            VarDecl* lookupCurrentFrame(std::string_view name) {
+                if (frames.empty()) return nullptr;
+                auto it = frames.back().find(name);
+                return (it != frames.back().end()) ? it->second : nullptr;
+            }
 
             VarDecl* lookup(std::string_view name) {
                 for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
@@ -24,14 +35,16 @@ namespace safec {
                 }
                 return nullptr;
             }
+
     };
 
     class Sema {
+
         public:
             explicit Sema(DiagnosticsEngine& diag) : diag(diag) {}
             void run(Program& prog);
 
-            // Phase 1 : Type Coercion & Conversion Engine (Person B)
+            // Phase 1 : Type Coercion & Conversion Engine
             bool coerce(ExprPtr& expr, const Type* targetType);
             bool coerceToBool(ExprPtr& expr, const TypeContext& types);
 
@@ -45,10 +58,14 @@ namespace safec {
 
             // Context State
             FunctionDecl* currFun = nullptr;
-            bool isTrusted = false;
+            bool isTrusted = false; // Tracks if traversal is inside a trusted block
+            bool inCallee = false;  // Tracks if NameExpr is the direct callee of CallExpr
+            int inDefer = 0;        // Tracks if traversal is inside a defer block
+            std::vector<Stmt*> breakStack;
+            std::vector<Stmt*> continueStack;
 
             // Phase 1 : Building Blocks
-            const Type* resolveType(TypeSpec* spec);
+            const Type* resolveType(TypeSpec* spec, Program& prog, bool isParam = false);
 
             // Phase 2 : Structural Passes
             void collectGlobals(Program& prog);
@@ -56,11 +73,12 @@ namespace safec {
             void resolveSignatures(Program& prog);
             void checkBodies(Program& prog);
 
-            void checkStmt(Stmt* stmt);
-            void checkExpr(Expr* expr);
-            
-            // Phase 2: Expression Minimal Slice (Person B)
-            void checkAssignment(AssignExpr* expr);
+            void checkStmt(Stmt* stmt, Program& prog);
+            void checkExpr(Expr* expr, Program& prog);
+            void checkCondition(ExprPtr &cond, SourceLoc loc, Program &prog);
+
+            // Phases 2-3 : Expression Checking
+            void checkAssignment(AssignExpr* expr, TypeContext& types);
             void checkCall(CallExpr* expr, const FunctionType* fnType);
             void checkNew(NewExpr* expr, const Type* allocatedType, TypeContext& types);
             void checkFreeExpr(FreeExpr* expr, TypeContext& types);
@@ -69,12 +87,12 @@ namespace safec {
             void checkBinary(BinaryExpr* expr, TypeContext& types);
             void checkIndex(IndexExpr* expr, TypeContext& types);
             void checkCompoundLiteral(CompoundLiteralExpr* expr);
-            // Phase 4: Basic Flow-Sensitive Narrowing (Person B)
+
+            // Phase 4: Basic Flow-Sensitive Narrowing
             void applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types);
             void clearNarrowing(Expr* target);
             const Type* getNarrowedType(ValueDecl* decl, const Type* originalType);
 
-        private:
             std::unordered_map<ValueDecl*, const Type*> narrowedVars;
 
             // Allow the local test function to access these private hooks
@@ -85,6 +103,7 @@ namespace safec {
             void checkArrow(MemberExpr* e);
             void checkFree(FreeExpr* e);
             void handleMove(Expr* target, Expr* value, SourceLoc loc);
+            
     };
 
     void test_phase1_conversions();
