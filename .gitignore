@@ -12,6 +12,7 @@ position.hh
 stack.hh
 main_parser.o
 ast_dump.o
+sema.o
 
 # macOS
 .DS_Store
