@@ -54,6 +54,32 @@ namespace safec {
 				}
 			}
 
+			if (auto* be = dyn_cast<BinaryExpr>(expr)) {
+				auto lhs = evalConstInt(be->lhs.get());
+				auto rhs = evalConstInt(be->rhs.get());
+				if (!lhs.has_value() || !rhs.has_value()) return std::nullopt;
+				switch (be->op) {
+					case BinaryOp::Add:    return *lhs + *rhs;
+					case BinaryOp::Sub:    return *lhs - *rhs;
+					case BinaryOp::Mul:    return *lhs * *rhs;
+					case BinaryOp::Div:    return (*rhs == 0) ? std::nullopt : std::optional<int64_t>(*lhs / *rhs);
+					case BinaryOp::Mod:    return (*rhs == 0) ? std::nullopt : std::optional<int64_t>(*lhs % *rhs);
+					case BinaryOp::BitAnd: return *lhs & *rhs;
+					case BinaryOp::BitOr:  return *lhs | *rhs;
+					case BinaryOp::BitXor: return *lhs ^ *rhs;
+					case BinaryOp::Shl:    return (*rhs < 0 || *rhs >= 63) ? std::nullopt : std::optional<int64_t>(*lhs << *rhs);
+					case BinaryOp::Shr:    return (*rhs < 0 || *rhs >= 63) ? std::nullopt : std::optional<int64_t>(*lhs >> *rhs);
+					case BinaryOp::Lt:     return (*lhs <  *rhs) ? 1 : 0;
+					case BinaryOp::Gt:     return (*lhs >  *rhs) ? 1 : 0;
+					case BinaryOp::Le:     return (*lhs <= *rhs) ? 1 : 0;
+					case BinaryOp::Ge:     return (*lhs >= *rhs) ? 1 : 0;
+					case BinaryOp::Eq:     return (*lhs == *rhs) ? 1 : 0;
+					case BinaryOp::Ne:     return (*lhs != *rhs) ? 1 : 0;
+					case BinaryOp::LogAnd: return (*lhs && *rhs) ? 1 : 0;
+					case BinaryOp::LogOr:  return (*lhs || *rhs) ? 1 : 0;
+				}
+			}
+
 			return std::nullopt; // Not a constant integer expression
 
 		}
@@ -107,6 +133,141 @@ namespace safec {
 
 			return false;
 
+		}
+
+		// Pre-scans an expression for assignments/increments to drop unsound loop narrowings
+		void dropAssignedInExpr(const Expr* expr, std::unordered_map<ValueDecl*, const Type*>& narrowed) {
+			if (!expr) return;
+			switch (expr->kind()) {
+				case NodeKind::AssignExpr: {
+					auto* ae = cast<AssignExpr>(expr);
+					if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ae->target.get()))) {
+						for (auto it = narrowed.begin(); it != narrowed.end(); ) {
+							if (it->first->name == ne->name) it = narrowed.erase(it);
+							else ++it;
+						}
+					}
+					dropAssignedInExpr(ae->target.get(), narrowed);
+					dropAssignedInExpr(ae->value.get(), narrowed);
+					break;
+				}
+				case NodeKind::UnaryExpr: {
+					auto* ue = cast<UnaryExpr>(expr);
+					if (ue->isIncDec()) {
+						if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ue->operand.get()))) {
+							for (auto it = narrowed.begin(); it != narrowed.end(); ) {
+								if (it->first->name == ne->name) it = narrowed.erase(it);
+								else ++it;
+							}
+						}
+					}
+					dropAssignedInExpr(ue->operand.get(), narrowed);
+					break;
+				}
+				case NodeKind::BinaryExpr: {
+					auto* be = cast<BinaryExpr>(expr);
+					dropAssignedInExpr(be->lhs.get(), narrowed);
+					dropAssignedInExpr(be->rhs.get(), narrowed);
+					break;
+				}
+				case NodeKind::CallExpr: {
+					auto* ce = cast<CallExpr>(expr);
+					dropAssignedInExpr(ce->callee.get(), narrowed);
+					for (const auto& arg : ce->args) {
+						dropAssignedInExpr(arg.get(), narrowed);
+						// Also drop narrowing if a variable's mutable address (&mut p) is passed
+						if (auto* ue = dyn_cast<UnaryExpr>(unwrapImplicit(arg.get()))) {
+							if (ue->op == UnaryOp::AddrOfMut) {
+								if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ue->operand.get()))) {
+									for (auto it = narrowed.begin(); it != narrowed.end(); ) {
+										if (it->first->name == ne->name) it = narrowed.erase(it);
+										else ++it;
+									}
+								}
+							}
+						}
+					}
+					break;
+				}
+				case NodeKind::IndexExpr: {
+					auto* ie = cast<IndexExpr>(expr);
+					dropAssignedInExpr(ie->base.get(), narrowed);
+					dropAssignedInExpr(ie->index.get(), narrowed);
+					break;
+				}
+				case NodeKind::MemberExpr:
+					dropAssignedInExpr(cast<MemberExpr>(expr)->base.get(), narrowed);
+					break;
+				case NodeKind::FreeExpr:
+					dropAssignedInExpr(cast<FreeExpr>(expr)->operand.get(), narrowed);
+					break;
+				case NodeKind::CompoundLiteralExpr:
+					for (const auto& init : cast<CompoundLiteralExpr>(expr)->inits)
+						dropAssignedInExpr(init.value.get(), narrowed);
+					break;
+				case NodeKind::ImplicitCastExpr:
+					dropAssignedInExpr(cast<ImplicitCastExpr>(expr)->sub.get(), narrowed);
+					break;
+				default:
+					break;
+			}
+		}
+
+		void dropAssignedInStmt(const Stmt* stmt, std::unordered_map<ValueDecl*, const Type*>& narrowed) {
+			if (!stmt) return;
+			switch (stmt->kind()) {
+				case NodeKind::CompoundStmt:
+					for (const auto& s : cast<CompoundStmt>(stmt)->body)
+						dropAssignedInStmt(s.get(), narrowed);
+					break;
+				case NodeKind::DeclStmt:
+					for (const auto& vd : cast<DeclStmt>(stmt)->decls)
+						if (vd->init) dropAssignedInExpr(vd->init.get(), narrowed);
+					break;
+				case NodeKind::ExprStmt:
+					dropAssignedInExpr(cast<ExprStmt>(stmt)->expr.get(), narrowed);
+					break;
+				case NodeKind::IfStmt: {
+					auto* is = cast<IfStmt>(stmt);
+					dropAssignedInExpr(is->cond.get(), narrowed);
+					dropAssignedInStmt(is->thenStmt.get(), narrowed);
+					if (is->elseStmt) dropAssignedInStmt(is->elseStmt.get(), narrowed);
+					break;
+				}
+				case NodeKind::WhileStmt: {
+					auto* ws = cast<WhileStmt>(stmt);
+					dropAssignedInExpr(ws->cond.get(), narrowed);
+					dropAssignedInStmt(ws->body.get(), narrowed);
+					break;
+				}
+				case NodeKind::ForStmt: {
+					auto* fs = cast<ForStmt>(stmt);
+					if (fs->init) dropAssignedInStmt(fs->init.get(), narrowed);
+					if (fs->cond) dropAssignedInExpr(fs->cond.get(), narrowed);
+					if (fs->step) dropAssignedInExpr(fs->step.get(), narrowed);
+					dropAssignedInStmt(fs->body.get(), narrowed);
+					break;
+				}
+				case NodeKind::SwitchStmt: {
+					auto* sw = cast<SwitchStmt>(stmt);
+					dropAssignedInExpr(sw->cond.get(), narrowed);
+					for (const auto& sc : sw->cases)
+						for (const auto& s : sc->body)
+							dropAssignedInStmt(s.get(), narrowed);
+					break;
+				}
+				case NodeKind::ReturnStmt:
+					dropAssignedInExpr(cast<ReturnStmt>(stmt)->value.get(), narrowed);
+					break;
+				case NodeKind::DeferStmt:
+					dropAssignedInStmt(cast<DeferStmt>(stmt)->body.get(), narrowed);
+					break;
+				case NodeKind::TrustedStmt:
+					dropAssignedInStmt(cast<TrustedStmt>(stmt)->body.get(), narrowed);
+					break;
+				default:
+					break;
+			}
 		}
 
 	} // namespace
@@ -378,6 +539,7 @@ namespace safec {
 
 	void Sema::resolveSignatures(Program& prog) {
 
+		// 1: Resolve function return types and parameter types
 		for (auto& decl : prog.decls) {
 
 			if (auto* fd = dyn_cast<FunctionDecl>(decl.get())) {
@@ -457,25 +619,30 @@ namespace safec {
 				
 				vd->type = varType;
 
-				if (vd->init) {
-
-					checkExpr(vd->init.get(), prog);
-
-					if (vd->isGlobal && !vd->init->isInvalid() && !isGlobalConstant(vd->init.get())) {
-						diag.error(vd->init->loc, "Global initializers must be constants");
-						vd->init->setInvalid();
-					}
-
-					if (vd->type && !vd->init->isInvalid()) {
-						if (!coerce(vd->init, vd->type)) {
-							vd->setInvalid();
-						}
-					}
-
-				}
-
 			}
 
+		}
+
+		// 2: Check global variable initializers now that all global types are resolved
+		for (auto& decl : prog.decls) {
+			if (auto* vd = dyn_cast<VarDecl>(decl.get())) {
+				if (!vd->init) continue;
+
+				checkExpr(vd->init.get(), prog);
+
+				if (vd->isGlobal && !vd->init->isInvalid() && !isGlobalConstant(vd->init.get())) {
+					diag.error(vd->init->loc, "Global initializers must be constants");
+					vd->init->setInvalid();
+					vd->setInvalid();
+					continue;
+				}
+
+				if (vd->type && !vd->init->isInvalid()) {
+					if (!coerce(vd->init, vd->type)) {
+						vd->setInvalid();
+					}
+				}
+			}
 		}
 
 	}
@@ -503,7 +670,9 @@ namespace safec {
 
 				// Declare parameters in the function scope
 				for (auto& param : fd->params) {
-					scope.declare(param.get());
+					if (!param->name.empty()) {
+						scope.declare(param.get());
+					}
 				}
 
 				checkStmt(fd->body.get(), prog);
@@ -613,7 +782,7 @@ namespace safec {
 
 				applyNarrowing(is->cond.get(), /*isTrueBranch=*/true, prog.types);
 				checkStmt(is->thenStmt.get(), prog);
-				narrowedVars = savedNarrowing;
+				auto afterThen = narrowedVars;
 
 				// False branch (`if (p == null) ... else`)
 				narrowedVars = savedNarrowing;
@@ -637,10 +806,16 @@ namespace safec {
 			case NodeKind::WhileStmt: {
 				
 				auto* ws = cast<WhileStmt>(stmt);
+
+				// Drop outer narrowings for any variable modified inside the loop before checking cond/body
+				dropAssignedInExpr(ws->cond.get(), narrowedVars);
+				dropAssignedInStmt(ws->body.get(), narrowedVars);
+				auto savedNarrowing = narrowedVars;
+
 				checkCondition(ws->cond, ws->cond->loc, prog);
 
-				auto savedNarrowing = narrowedVars;
 				applyNarrowing(ws->cond.get(), /*isTrueBranch=*/true, prog.types);
+				dropAssignedInStmt(ws->body.get(), narrowedVars);
 
 				breakStack.push_back(ws);
 				continueStack.push_back(ws);
@@ -650,14 +825,7 @@ namespace safec {
 				breakStack.pop_back();
 				continueStack.pop_back();
 
-				// Restore outer narrowings, except any variable reassigned in the loop body
-				auto afterBody = narrowedVars;
-				narrowedVars.clear();
-				for (const auto& [decl, type] : savedNarrowing) {
-					if (afterBody.count(decl)) {
-						narrowedVars[decl] = type;
-					}
-				}
+				narrowedVars = std::move(savedNarrowing);
 
 				break;
 
@@ -702,6 +870,13 @@ namespace safec {
 				scope.push(); // For loops have their own scope for the initializer
 
 				if (fs->init) checkStmt(fs->init.get(), prog);
+
+				// Drop outer narrowings for any variable modified in the loop cond, step, or body
+				if (fs->cond) dropAssignedInExpr(fs->cond.get(), narrowedVars);
+				if (fs->step) dropAssignedInExpr(fs->step.get(), narrowedVars);
+				dropAssignedInStmt(fs->body.get(), narrowedVars);
+				auto savedNarrowing = narrowedVars;
+
 				if (fs->cond) checkCondition(fs->cond, fs->cond->loc, prog);
 				if (fs->step) checkExpr(fs->step.get(), prog);
 
@@ -712,6 +887,7 @@ namespace safec {
 
 				breakStack.pop_back();
 				continueStack.pop_back();
+				narrowedVars = std::move(savedNarrowing);
 				scope.pop(); // Pop the for-loop scope
 				break;
 
@@ -1238,6 +1414,16 @@ namespace safec {
 
 		}
 
+		auto* srcArr = dyn_cast<ArrayType>(srcType);
+		auto* targetArr = dyn_cast<ArrayType>(targetType);
+		if (srcArr && targetArr) {
+			if (srcArr->element() == targetArr->element() &&
+			    srcArr->size().has_value() && !targetArr->size().has_value()) {
+				expr = std::make_unique<ImplicitCastExpr>(CastKind::Reborrow, std::move(expr), targetType);
+				return true;
+			}
+		}
+
 		diag.error(expr->loc, "cannot implicitly convert expression of type '" + typeToString(srcType) + "' to '" + typeToString(targetType) + "'");
 		expr->setInvalid();
 		return false;
@@ -1295,20 +1481,38 @@ namespace safec {
 			auto *rB = dyn_cast<BuiltinType>(rType);
 
 			if (isa<PointerType>(lType) || isa<PointerType>(rType)) {
+				
 				if ((expr->op == AssignOp::Add || expr->op == AssignOp::Sub) && isa<PointerType>(lType) && rB && rB->isInteger()) {
+
+					const PointerType* ptrTarget = cast<PointerType>(lType);
+
+					if (ptrTarget->ptrKind() != PtrKind::Raw) {
+						diag.error(expr->loc, "pointer arithmetic is only allowed on 'raw' pointers, found '" + typeToString(ptrTarget) + "'");
+						expr->setInvalid();
+						return;
+					}
+
 					if (!isTrusted) {
 						diag.error(expr->loc, "pointer arithmetic is not allowed outside 'trusted' blocks");
 						expr->setInvalid();
 						return;
 					}
-					coerce(expr->value, types.intType());
+
+					if (!coerce(expr->value, types.intType())) {
+						expr->setInvalid();
+						return;
+					}
+
 					expr->type = lType;
 					expr->category = ValueCategory::RValue;
 					return;
+					
 				}
+
 				diag.error(expr->loc, "invalid pointer operands to compound assignment '" + std::string(assignOpSpelling(expr->op)) + "'");
 				expr->setInvalid();
 				return;
+				
 			}
 
 			bool isBitwiseOrMod = (expr->op == AssignOp::Mod || expr->op == AssignOp::And ||
@@ -1445,6 +1649,11 @@ namespace safec {
 				}
 				if (ptrT->isNullable()) {
 					diag.error(expr->loc, "cannot dereference nullable pointer '" + typeToString(ptrT) + "'; check for null first");
+					expr->setInvalid();
+					return;
+				}
+				if (ptrT->pointee() == types.voidType()) {
+					diag.error(expr->loc, "cannot dereference 'void*' pointer");
 					expr->setInvalid();
 					return;
 				}
@@ -1647,6 +1856,15 @@ namespace safec {
 					return;
 				}
 				
+				// validPtrArith guarantees exactly one operand is a pointer
+				const PointerType* ptrOperand = isa<PointerType>(lType) ? cast<PointerType>(lType) : cast<PointerType>(rType);
+
+				if (ptrOperand->ptrKind() != PtrKind::Raw) {
+					diag.error(expr->loc, "pointer arithmetic is only allowed on 'raw' pointers, found '" + typeToString(ptrOperand) + "'");
+					expr->setInvalid();
+					return;
+				}
+
 				if (!isTrusted) {
 					diag.error(expr->loc, "pointer arithmetic is not allowed outside 'trusted' blocks");
 					expr->setInvalid();
@@ -1732,13 +1950,19 @@ namespace safec {
 
 		auto* arrType = dyn_cast<ArrayType>(expr->base->type);
 		if (!arrType) {
-			if (isa<PointerType>(expr->base->type) && !isTrusted) {
-				diag.error(expr->loc, "pointer indexing is only allowed inside 'trusted' blocks");
-				expr->setInvalid();
-				return;
-			}
-			if (!isa<PointerType>(expr->base->type)) {
-				diag.error(expr->loc, "subscripted value is not an array or pointer");
+			if (auto* ptrT = dyn_cast<PointerType>(expr->base->type)) {
+				if (ptrT->ptrKind() != PtrKind::Raw) {
+					diag.error(expr->loc, "pointer indexing is only allowed on 'raw' pointers");
+					expr->setInvalid();
+					return;
+				}
+				if (!isTrusted) {
+					diag.error(expr->loc, "raw pointer indexing is only allowed inside 'trusted' blocks");
+					expr->setInvalid();
+					return;
+				}
+			} else {
+				diag.error(expr->loc, "subscripted value is not an array or raw pointer");
 				expr->setInvalid();
 				return;
 			}
@@ -1796,11 +2020,6 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
-				if (initializedFields[init.field]) {
-					diag.error(init.loc, "duplicate initialization of field '" + init.field + "'");
-					expr->setInvalid();
-					return;
-				}
 			} else {
 				if (positionalIdx >= sDecl->fields.size()) {
 					diag.error(init.loc, "too many initializers for struct '" + sDecl->name + "'");
@@ -1808,6 +2027,12 @@ namespace safec {
 					return;
 				}
 				targetField = sDecl->fields[positionalIdx++].get();
+			}
+
+			if (initializedFields[init.field]) {
+				diag.error(init.loc, "duplicate initialization of field '" + init.field + "'");
+				expr->setInvalid();
+				return;
 			}
 
 			init.resolved = targetField;
@@ -1884,13 +2109,20 @@ namespace safec {
 		}
 
 		if (nameExpr && isNullLit && nameExpr->decl) {
+
+			if (auto* vd = dyn_cast<VarDecl>(nameExpr->decl)) {
+				if (vd->isGlobal) return; // only narrow locals and parameters
+			}
+
 			const Type* curType = nameExpr->decl->type;
+
 			if (auto* ptrT = dyn_cast<PointerType>(curType)) {
 				if (ptrT->isNullable()) {
 					const Type* narrowed = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
 					narrowedVars[nameExpr->decl] = narrowed;
 				}
 			}
+			
 		}
 
 	}
