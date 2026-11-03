@@ -22,6 +22,12 @@ namespace safec {
                 return frames.back().emplace(d->name, d).second;
             }
 
+            VarDecl* lookupCurrentFrame(std::string_view name) {
+                if (frames.empty()) return nullptr;
+                auto it = frames.back().find(name);
+                return (it != frames.back().end()) ? it->second : nullptr;
+            }
+
             VarDecl* lookup(std::string_view name) {
                 for (auto it = frames.rbegin(); it != frames.rend(); ++it) {
                     if (it->count(name)) {
@@ -50,11 +56,13 @@ namespace safec {
             // Context State
             FunctionDecl* currFun = nullptr;
             bool isTrusted = false; // Tracks if traversal is inside a trusted block
+            bool inCallee = false;  // Tracks if NameExpr is the direct callee of CallExpr
+            int inDefer = 0;        // Tracks if traversal is inside a defer block
             std::vector<Stmt*> breakStack;
             std::vector<Stmt*> continueStack;
 
             // Phase 1 : Building Blocks
-            const Type* resolveType(TypeSpec* spec, Program& prog);
+            const Type* resolveType(TypeSpec* spec, Program& prog, bool isParam = false);
 
             // Phase 2 : Structural Passes
             void collectGlobals(Program& prog);
@@ -64,7 +72,8 @@ namespace safec {
 
             void checkStmt(Stmt* stmt, Program& prog);
             void checkExpr(Expr* expr, Program& prog);
-            
+            void checkCondition(ExprPtr &cond, SourceLoc loc, Program &prog);
+
             // Hooks for B (expressions)
             void checkAssignment(AssignExpr* expr);
             void checkCall(CallExpr* expr);
