@@ -1,0 +1,9 @@
+// M1: moved in a previous iteration
+void eat(own int* p) { free(p); }
+
+void f() {
+    own int* a = new int;
+    while (1) {
+        eat(a);         // error: 'a' was moved in a previous iteration of the loop
+    }
+}

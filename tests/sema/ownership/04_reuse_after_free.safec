@@ -1,0 +1,7 @@
+// a freed owner can be given a new value
+void f() {
+    own int* a = new int;
+    free(a);
+    a = new int;
+    free(a);
+}

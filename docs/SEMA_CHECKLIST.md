@@ -29,7 +29,7 @@ General rules for every check:
 - [ ] Duplicate struct name (`struct A {..}; struct A {..};`)
 - [ ] Duplicate field name within one struct
 - [ ] Duplicate global name (functions and global variables share one namespace)
-- [ ] Duplicate parameter name
+- [ ] Duplicate parameter name (in functions, ex `f(int a, int a)`)
 - [ ] Duplicate local in the **same** block (shadowing an outer scope is allowed)
 - [ ] A local is visible only *after* its declarator: `int x = x;` is an error
 - [ ] If `main` is defined, it must be `int main()` / `int main(void)`
@@ -118,9 +118,10 @@ and `p->f` are lvalues; everything else is an rvalue.
 - [ ] Writing through a read borrow (`T*`) is an error: `*p = 1` and
       `p->f = 1` need `own` or `mut`
 
-## Later
+## Later 
 
 These need flow-sensitive analysis on top of the above:
+Based on Rust whitepaper. Further additions will be added here later.
 
 - **Moves:** use after move (`own T* b = a; *a;`) and double free
 - **Leaks:** an `own` pointer goes out of scope without being freed or moved
@@ -131,3 +132,12 @@ These need flow-sensitive analysis on top of the above:
   field can't be copied by value
 - **Proper narrowing:** full data-flow narrowing in place of the
   lexical version above
+
+## TODO
+
+- [ ] **Pointers to `mut` borrows.** A type has one qualifier, applied to its
+      outermost `*`, so for `mut int* m;` the type of `&mut m` can't be
+      written in any declaration. For now Sema rejects `&mut` of a `mut`
+      borrow. Supporting it needs a qualifier per pointer level (grammar,
+      `TypeSpec`, `resolveType`), and the rule that a borrow can't be stored
+      through a pointer (`*q = &x`) must still hold for the new types.

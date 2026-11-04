@@ -1,0 +1,7 @@
+// M1: use after move
+void f() {
+    own int* a = new int;
+    own int* b = a;
+    *a = 1;             // error: use of moved pointer 'a'
+    free(b);
+}

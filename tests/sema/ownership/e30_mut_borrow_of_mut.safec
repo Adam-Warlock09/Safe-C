@@ -1,0 +1,7 @@
+// TODO: pointers to 'mut' borrows have no nameable type yet, so '&mut' of a 'mut' borrow is rejected
+int main() {
+    int x = 1;
+    mut int* m = &mut x;
+    **(&mut m) = 5;         // error: cannot take a mutable borrow of the 'mut' borrow 'mut int*'
+    return 0;
+}

@@ -1,0 +1,4 @@
+// an owning rvalue that is never stored or freed
+void f() {
+    new int;            // error: owned value of type 'own int*' is leaked
+}

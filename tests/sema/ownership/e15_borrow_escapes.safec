@@ -1,0 +1,11 @@
+// T1: borrows are second-class: no borrow fields, globals, arrays or returns
+struct Bad { int* p; };                 // error: borrow type 'int*' cannot be stored in a struct field
+int* g;                                 // error: borrow type 'int*' cannot be stored in a global variable
+
+int* f(int* p) {                        // error: borrow type 'int*' cannot be returned from a function
+    return p;
+}
+
+void h() {
+    int* arr[2];                        // error: borrow type 'int*' cannot be stored in an array
+}

@@ -1,0 +1,7 @@
+// B1: reading a place while it is mutably borrowed
+void f() {
+    int x = 1;
+    mut int* m = &mut x;
+    int y = x;          // error: cannot read 'x' while it is mutably borrowed
+    *m = y;
+}

@@ -2,7 +2,8 @@
 # Needs flex, bison 3.x and a C++17 compiler (the parser is C++).
 #
 # Targets:
-#   make            build the safec-parser and the standalone lexer test binary
+#   make            build the safec-parser, the standalone lexer test binary and the driver
+#   make driver     build the driver (driver --till-lexer|--till-parser|--till-sema|--till-codegen <file>)
 #   make test       run the lexer regression test and the parser test suite
 #   make test-lexer run the existing lexer test (tests/lexer/test_lexer.safec)
 #   make test-parser run the parser test suite (tests/parser/)
@@ -17,7 +18,7 @@ CXXFLAGS 	= -std=c++17 -Wall -Wextra -O2 -I. -Isrc
 LEXCFLAGS  	= -w -Isrc
 YACCCFLAGS 	= -w -Isrc -std=c++17
 
-all: safec-parser lexer
+all: safec-parser lexer driver
 
 lex.yy.c: src/lexer.l src/tokens.h
 	$(FLEX) -o $@ src/lexer.l
@@ -43,11 +44,20 @@ main_parser.o: src/main_parser.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h s
 ast_dump.o: src/ast_dump.cpp src/ast_dump.h src/new_ast.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/ast_dump.cpp
 
+borrowck.o: src/borrowck.cpp src/borrowck.h src/new_ast.h
+	$(CXX) $(CXXFLAGS) -c -o $@ src/borrowck.cpp
+
+driver.o: src/driver.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h src/sema.h src/tokens.h
+	$(CXX) $(CXXFLAGS) -c -o $@ src/driver.cpp
+
+driver: driver.o parser.tab.o lexer-lib.o ast_dump.o sema.o borrowck.o
+	$(CXX) -o $@ $^
+
 lexer: lexer.o
 	$(CC) -o $@ lexer.o
 
-safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o
-	$(CXX) -o $@ parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o
+safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o
+	$(CXX) -o $@ parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o
 
 test-lexer: lexer
 	@echo "== lexer regression test (tests/lexer/test_lexer.safec) =="
@@ -61,6 +71,7 @@ test: test-lexer test-parser
 clean:
 	rm -f safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
 	      parser.tab.o parser.tab.cpp parser.tab.hpp parser.tab.c parser.tab.h \
-	      location.hh position.hh stack.hh main_parser.o ast_dump.o sema.o
+	      location.hh position.hh stack.hh main_parser.o ast_dump.o sema.o \
+	      driver driver.o borrowck.o
 
 .PHONY: all test test-lexer test-parser clean

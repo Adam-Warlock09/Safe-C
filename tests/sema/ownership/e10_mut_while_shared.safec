@@ -1,0 +1,6 @@
+// B1: &mut while a shared borrow is live
+void f() {
+    int x = 1;
+    int* r = &x;
+    mut int* m = &mut x;    // error: cannot borrow 'x' as mutable because it is also borrowed
+}

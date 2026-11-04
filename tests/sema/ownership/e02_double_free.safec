@@ -1,0 +1,6 @@
+// M1: double free
+void f() {
+    own int* a = new int;
+    free(a);
+    free(a);            // error: double free of 'a'
+}

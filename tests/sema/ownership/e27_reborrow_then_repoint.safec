@@ -1,0 +1,13 @@
+// a reborrow keeps the original target borrowed after the source is re-pointed
+void f() {
+    int y = 0;
+    int z = 0;
+    mut int* s = &mut z;
+    {
+        int x = 1;
+        mut int* r = &mut x;
+        s = r;
+        r = &mut y;
+    }                   // error: 'x' does not live long enough
+    *s = 5;
+}

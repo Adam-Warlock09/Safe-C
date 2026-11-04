@@ -1,0 +1,8 @@
+// T2: copying a struct that owns pointers would give two owners
+struct Node { int v; own struct Node*? next; };
+struct L { own struct Node*? head; };
+
+void f() {
+    struct L a = (struct L){ .head = null };
+    struct L b = a;     // error: cannot copy 'struct L': it contains owning pointers
+}

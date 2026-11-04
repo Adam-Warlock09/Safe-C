@@ -1,0 +1,4 @@
+// M4: leak at scope end
+void f() {
+    own int* a = new int;
+}                       // error: 'a' is leaked at end of scope

@@ -1,0 +1,13 @@
+// M1 through switch fallthrough
+void f(int c) {
+    own int* a = new int;
+    switch (c) {
+    case 1:
+        free(a);
+        break;
+    case 2:
+        free(a);
+    default:
+        free(a);        // error: 'a' may have been freed
+    }
+}

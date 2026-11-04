@@ -1,0 +1,5 @@
+// an unbraced if body is its own scope: the defer runs only when c is true
+void f(int c) {
+    own int* x = new int;
+    if (c) defer free(x);
+}                       // error: 'x' is leaked on some paths at end of scope

@@ -1,0 +1,6 @@
+// M5: moved out of borrowed data and not put back
+struct Node { int v; own struct Node*? next; };
+
+own struct Node*? take(mut struct Node* n) {
+    return n->next;     // error: 'n->next' was moved out of borrowed data and not restored
+}

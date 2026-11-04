@@ -1,0 +1,6 @@
+// B2: freeing an owner that is borrowed
+void f() {
+    own int* a = new int;
+    int* r = a;
+    free(a);            // error: cannot free 'a' while it is borrowed
+}

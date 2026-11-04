@@ -1,0 +1,5 @@
+// M4: freed on one branch only
+void f(int c) {
+    own int* a = new int;
+    if (c) free(a);
+}                       // error: 'a' is leaked on some paths

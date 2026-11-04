@@ -1,0 +1,12 @@
+// re-pointing a borrow local (D4 / 6.4)
+struct Node { int v; own struct Node*? next; };
+
+int sum(struct Node*? n) {
+    int s = 0;
+    struct Node*? cur = n;
+    while (cur != null) {
+        s = s + cur->v;
+        cur = cur->next;
+    }
+    return s;
+}

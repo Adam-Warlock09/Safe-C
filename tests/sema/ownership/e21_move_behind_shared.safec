@@ -1,0 +1,6 @@
+// no O through a shared borrow
+struct Node { int v; own struct Node*? next; };
+
+own struct Node*? steal(struct Node* n) {
+    return n->next;     // error: cannot move out of 'n->next', which is behind a shared borrow
+}

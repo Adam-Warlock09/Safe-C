@@ -1,0 +1,7 @@
+// defer runs on every exit
+void f(int c) {
+    own int* x = new int;
+    defer free(x);
+    if (c) return;
+    *x = 3;
+}

@@ -1,0 +1,4 @@
+// M8: free of a pointer that may be null
+void f(own int*? p) {
+    free(p);            // error: 'p' may be null; check it before free
+}

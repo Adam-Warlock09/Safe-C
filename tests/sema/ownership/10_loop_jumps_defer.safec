@@ -1,0 +1,10 @@
+// break/continue run the defers of every block they leave
+void f(int c) {
+    while (c) {
+        own int* a = new int;
+        defer free(a);
+        if (c) break;
+        if (c) continue;
+        *a = c;
+    }
+}

@@ -5,6 +5,7 @@
 #include <climits>
 #include <iostream>
 #include <unordered_set>
+#include "borrowck.h"
 
 namespace safec {
 
@@ -132,6 +133,65 @@ namespace safec {
 			}
 
 			return false;
+
+		}
+
+		// T1: finds the first borrow level (`T*`, `mut T*`, nullable or not) of a type, looking through arrays and own pointers
+		const PointerType* findBorrow(const Type* t) {
+
+			while (t) {
+				if (auto* at = dyn_cast<ArrayType>(t)) {
+					t = at->element();
+				} else if (auto* pt = dyn_cast<PointerType>(t)) {
+					if (pt->ptrKind() == PtrKind::Borrow || pt->ptrKind() == PtrKind::MutBorrow) return pt;
+					if (pt->ptrKind() == PtrKind::Raw) return nullptr; // Raw pointers are never tracked
+					t = pt->pointee();
+				} else {
+					return nullptr;
+				}
+			}
+
+			return nullptr;
+
+		}
+
+		const FieldDecl* findOwningField(const StructDecl* sd, std::unordered_set<const StructDecl*>& visited);
+
+		// T2-T4: a type is owning if it is `own T*` / `own T*?`, or a struct or array that contains one by value
+		bool isOwning(const Type* t, std::unordered_set<const StructDecl*>& visited) {
+
+			while (auto* at = dyn_cast<ArrayType>(t)) {
+				t = at->element();
+			}
+			if (auto* pt = dyn_cast<PointerType>(t)) {
+				return pt->ptrKind() == PtrKind::Own;
+			}
+			if (auto* st = dyn_cast<StructType>(t)) {
+				return findOwningField(st->decl(), visited) != nullptr;
+			}
+
+			return false;
+
+		}
+
+		bool isOwning(const Type* t) {
+			std::unordered_set<const StructDecl*> visited;
+			return isOwning(t, visited);
+		}
+
+		// Finds the first field that makes a struct owning (nullptr if there is none)
+		const FieldDecl* findOwningField(const StructDecl* sd, std::unordered_set<const StructDecl*>& visited) {
+
+			if (!sd || !visited.insert(sd).second) return nullptr; // Already visited
+
+			for (const auto& field : sd->fields) {
+				if (!field->type || field->isInvalid()) continue;
+				if (isOwning(field->type, visited)) {
+					return field.get();
+				}
+			}
+
+			return nullptr;
 
 		}
 
@@ -270,6 +330,29 @@ namespace safec {
 			}
 		}
 
+		// True if a statement never completes normally (always ends in return / break / continue)
+		bool alwaysExits(const Stmt* stmt) {
+			if (!stmt) return false;
+			switch (stmt->kind()) {
+				case NodeKind::ReturnStmt:
+				case NodeKind::BreakStmt:
+				case NodeKind::ContinueStmt:
+					return true;
+				case NodeKind::CompoundStmt:
+					for (const auto& s : cast<CompoundStmt>(stmt)->body)
+						if (alwaysExits(s.get())) return true;
+					return false;
+				case NodeKind::IfStmt: {
+					auto* is = cast<IfStmt>(stmt);
+					return is->elseStmt && alwaysExits(is->thenStmt.get()) && alwaysExits(is->elseStmt.get());
+				}
+				case NodeKind::TrustedStmt:
+					return alwaysExits(cast<TrustedStmt>(stmt)->body.get());
+				default:
+					return false; // Loops and switches may complete normally
+			}
+		}
+
 	} // namespace
 
 	// ===================================================================
@@ -289,6 +372,9 @@ namespace safec {
 
 		// Pass 4 : Bodies
 		checkBodies(prog);
+
+		// Pass 5 : Ownership and borrow checking 
+		if (!diag.hasErrors()) BorrowChecker(diag).run(prog);
 
 		scope.pop(); // Clean up global scope opened in collectGlobals()
 
@@ -400,6 +486,20 @@ namespace safec {
 			// Void arrays are always illegal, regardless of context
 			if (currentType->kind() == TypeKind::Builtin && cast<BuiltinType>(currentType)->builtinKind() == BuiltinKind::Void) {
 				diag.error(spec->loc, "Array element type cannot be void");
+				spec->setInvalid();
+				return nullptr;
+			}
+
+			// T1: borrows are second-class and cannot be stored in arrays
+			if (const PointerType* borrow = findBorrow(currentType)) {
+				diag.error(spec->loc, "borrow type '" + typeToString(borrow) + "' cannot be stored in an array");
+				spec->setInvalid();
+				return nullptr;
+			}
+
+			// T3: the ownership checker cannot track array elements separately
+			if (isOwning(currentType)) {
+				diag.error(spec->loc, "arrays of owning type '" + typeToString(currentType) + "' are not allowed");
 				spec->setInvalid();
 				return nullptr;
 			}
@@ -535,6 +635,45 @@ namespace safec {
 			}
 		}
 
+		// Ownership type rules for fields 
+		for (auto& decl : prog.decls) {
+			if (auto* sd = dyn_cast<StructDecl>(decl.get())) {
+
+				if (sd->isInvalid()) continue;
+
+				for (auto& field : sd->fields) {
+					if (!field->type || field->isInvalid()) continue;
+
+					// T1: borrows are second-class and cannot be stored in fields
+					if (const PointerType* borrow = findBorrow(field->type)) {
+						diag.error(field->loc, "borrow type '" + typeToString(borrow) + "' cannot be stored in a struct field");
+						field->setInvalid();
+						continue;
+					}
+
+					// T3 again: resolveType cannot see the owning fields of a struct declared later
+					if (isa<ArrayType>(field->type) && isOwning(field->type)) {
+						const Type* elem = field->type;
+						while (auto* at = dyn_cast<ArrayType>(elem)) {
+							elem = at->element();
+						}
+						diag.error(field->loc, "arrays of owning type '" + typeToString(elem) + "' are not allowed");
+						field->setInvalid();
+						continue;
+					}
+
+					// T5: `new` zero-fills, so an `own` field always starts out null
+					auto* ptrT = dyn_cast<PointerType>(field->type);
+					if (ptrT && ptrT->ptrKind() == PtrKind::Own && !ptrT->isNullable()) {
+						const Type* nullableT = prog.types.pointerTo(ptrT->pointee(), PtrKind::Own, /*nullable=*/true);
+						diag.error(field->loc, "own field '" + field->name + "' must be nullable ('" + typeToString(nullableT) + "') because 'new' zero-fills it");
+						field->setInvalid();
+					}
+				}
+
+			}
+		}
+
 	}
 
 	void Sema::resolveSignatures(Program& prog) {
@@ -549,6 +688,10 @@ namespace safec {
 				// Resolve return type
 				const Type* retType = resolveType(fd->returnSpec.get(), prog, false);
 				if (!retType) {
+					fd->setInvalid();
+				} else if (const PointerType* borrow = findBorrow(retType)) {
+					// T1: a returned borrow could outlive what it points to
+					diag.error(fd->loc, "borrow type '" + typeToString(borrow) + "' cannot be returned from a function");
 					fd->setInvalid();
 				}
 
@@ -615,8 +758,18 @@ namespace safec {
 					diag.error(vd->loc, "Variable cannot have void type");
 					vd->setInvalid();
 					varType = nullptr;
+				} else if (const PointerType* borrow = findBorrow(varType)) {
+					// T1: a global borrow could outlive what it points to
+					diag.error(vd->loc, "borrow type '" + typeToString(borrow) + "' cannot be stored in a global variable");
+					vd->setInvalid();
+					varType = nullptr;
+				} else if (isOwning(varType)) {
+					// T4: the ownership checker cannot track a global's state across functions
+					diag.error(vd->loc, "global variable cannot have owning type '" + typeToString(varType) + "'");
+					vd->setInvalid();
+					varType = nullptr;
 				}
-				
+
 				vd->type = varType;
 
 			}
@@ -784,18 +937,28 @@ namespace safec {
 				checkStmt(is->thenStmt.get(), prog);
 				auto afterThen = narrowedVars;
 
-				// False branch (`if (p == null) ... else`)
 				narrowedVars = savedNarrowing;
+				applyNarrowing(is->cond.get(), /*isTrueBranch=*/false, prog.types);
 				if (is->elseStmt) {
-					applyNarrowing(is->cond.get(), /*isTrueBranch=*/false, prog.types);
 					checkStmt(is->elseStmt.get(), prog);
 				}
 				auto afterElse = narrowedVars;
 
-				narrowedVars.clear();
-				for (const auto& [decl, type] : savedNarrowing) {
-					if (afterThen.count(decl) && afterElse.count(decl)) {
-						narrowedVars[decl] = type;
+				// A branch that always exits doesn't reach the code after the if
+				bool thenExits = alwaysExits(is->thenStmt.get());
+				bool elseExits = is->elseStmt && alwaysExits(is->elseStmt.get());
+
+				if (thenExits && !elseExits) {
+					narrowedVars = std::move(afterElse);
+				} else if (elseExits && !thenExits) {
+					narrowedVars = std::move(afterThen);
+				} else {
+				  // Keep common narrowings
+					narrowedVars.clear();
+					for (const auto& [decl, type] : savedNarrowing) {
+						if (afterThen.count(decl) && afterElse.count(decl)) {
+							narrowedVars[decl] = type;
+						}
 					}
 				}
 
@@ -814,8 +977,8 @@ namespace safec {
 
 				checkCondition(ws->cond, ws->cond->loc, prog);
 
+				// The body only runs right after the condition held; assignments inside it clear the narrowing in order
 				applyNarrowing(ws->cond.get(), /*isTrueBranch=*/true, prog.types);
-				dropAssignedInStmt(ws->body.get(), narrowedVars);
 
 				breakStack.push_back(ws);
 				continueStack.push_back(ws);
@@ -877,8 +1040,11 @@ namespace safec {
 				dropAssignedInStmt(fs->body.get(), narrowedVars);
 				auto savedNarrowing = narrowedVars;
 
-				if (fs->cond) checkCondition(fs->cond, fs->cond->loc, prog);
-				if (fs->step) checkExpr(fs->step.get(), prog);
+				if (fs->cond) {
+					checkCondition(fs->cond, fs->cond->loc, prog);
+					applyNarrowing(fs->cond.get(), /*isTrueBranch=*/true, prog.types);
+				}
+				auto condNarrowing = narrowedVars;
 
 				breakStack.push_back(fs);
 				continueStack.push_back(fs);
@@ -887,6 +1053,12 @@ namespace safec {
 
 				breakStack.pop_back();
 				continueStack.pop_back();
+
+				// The step runs after the body or a `continue`: keep only the condition narrowings the body cannot change
+				narrowedVars = std::move(condNarrowing);
+				dropAssignedInStmt(fs->body.get(), narrowedVars);
+				if (fs->step) checkExpr(fs->step.get(), prog);
+
 				narrowedVars = std::move(savedNarrowing);
 				scope.pop(); // Pop the for-loop scope
 				break;
@@ -934,9 +1106,6 @@ namespace safec {
 								cs->setInvalid();
 							}
 						}
-						for (auto& s : cs->body) {
-							checkStmt(s.get(), prog);
-						}
 					} else if(auto* ds = dyn_cast<DefaultStmt>(sc.get())) {
 						if (hasDefault) {
 							diag.error(ds->loc, "Switch statement can have atmost one default case");
@@ -946,9 +1115,16 @@ namespace safec {
 							hasDefault = true;
 							defaultLoc = ds->loc;
 						}
-						for (auto& s : ds->body) {
-							checkStmt(s.get(), prog);
+					}
+
+					for (auto& s : sc->body) {
+						// Case bodies share the switch's scope, so a defer here would also run on paths that never reached it
+						if (isa<DeferStmt>(s.get())) {
+							diag.error(s->loc, "'defer' cannot appear directly in a switch case; wrap the case body in braces");
+							s->setInvalid();
+							continue;
 						}
+						checkStmt(s.get(), prog);
 					}
 
 				}
@@ -1333,7 +1509,19 @@ namespace safec {
 		if (expr->isInvalid()) return false;
 
 		const Type* srcType = expr->type;
-		
+
+		// T2: copying an lvalue of an owning struct would leave two owners of the same allocations
+		auto* srcStruct = dyn_cast<StructType>(srcType);
+		if (srcStruct && expr->isLValue()) {
+			std::unordered_set<const StructDecl*> visited;
+			if (const FieldDecl* field = findOwningField(srcStruct->decl(), visited)) {
+				diag.error(expr->loc, "cannot copy '" + typeToString(srcType) + "': it contains owning pointers");
+				diag.note(field->loc, "field '" + field->name + "' has owning type '" + typeToString(field->type) + "'");
+				expr->setInvalid();
+				return false;
+			}
+		}
+
 		if (srcType == targetType) {
 			return true;
 		}
@@ -1534,6 +1722,15 @@ namespace safec {
 			}
 		}
 
+		// T1: a borrow can only be stored in a variable; storing it through a pointer (`*q = &x`) lets it outlive what it points to
+		if (expr->op == AssignOp::Assign && !isa<NameExpr>(unwrapImplicit(expr->target.get()))) {
+			if (const PointerType* borrow = findBorrow(expr->target->type)) {
+				diag.error(expr->loc, "borrow type '" + typeToString(borrow) + "' cannot be stored through a pointer; assign it to a variable instead");
+				expr->setInvalid();
+				return;
+			}
+		}
+
 		// 2. Own pointer assignment represents a Move
 		if (expr->op == AssignOp::Assign) {
 			if (auto* ptrT = dyn_cast<PointerType>(expr->target->type)) {
@@ -1599,8 +1796,15 @@ namespace safec {
 		if (!expr || !expr->operand || !expr->operand->type) return;
 
 		auto* ptrT = dyn_cast<PointerType>(expr->operand->type);
-		if (!ptrT || ptrT->ptrKind() != PtrKind::Own || ptrT->isNullable()) {
-			diag.error(expr->loc, "'free' requires a non-nullable owning pointer ('own T*'), found '" + typeToString(expr->operand->type) + "'");
+		if (!ptrT || ptrT->ptrKind() != PtrKind::Own) {
+			diag.error(expr->loc, "'free' requires an owning pointer ('own T*'), found '" + typeToString(expr->operand->type) + "'");
+			expr->setInvalid();
+			return;
+		}
+
+		// A nullable owner must be a variable or field: the ownership checker then requires a null check before the free (M8)
+		if (ptrT->isNullable() && !expr->operand->isLValue()) {
+			diag.error(expr->loc, "'free' of a nullable owning pointer '" + typeToString(ptrT) + "' requires a variable or field; store it and check it for null first");
 			expr->setInvalid();
 			return;
 		}
@@ -1633,6 +1837,13 @@ namespace safec {
 			case UnaryOp::AddrOfMut: {
 				if (!expr->operand->isLValue()) {
 					diag.error(expr->loc, "cannot take mutable address of an rvalue");
+					expr->setInvalid();
+					return;
+				}
+				// TODO: support `mut` borrows of `mut` borrows. A type has one qualifier, on its outermost '*', so the
+				// result has no type a declaration can name; reject it until there is a qualifier per pointer level
+				if (auto* opPtr = dyn_cast<PointerType>(opType); opPtr && opPtr->ptrKind() == PtrKind::MutBorrow) {
+					diag.error(expr->loc, "cannot take a mutable borrow of the 'mut' borrow '" + typeToString(opType) + "' (not supported yet)");
 					expr->setInvalid();
 					return;
 				}

@@ -1,0 +1,15 @@
+// after a mut borrow, own fields are only known by their type
+struct Node { int v; own struct Node*? next; };
+struct List { own struct Node*? head; };
+
+void push(mut struct List* l, int v) {
+    own struct Node* n = new struct Node;
+    n->v = v;
+    n->next = l->head;
+    l->head = n;
+}
+
+void f() {
+    struct List l = (struct List){ .head = null };
+    push(&mut l, 1);
+}                       // error: 'l.head' may be leaked at end of scope

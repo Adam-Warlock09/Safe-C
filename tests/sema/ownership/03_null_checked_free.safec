@@ -1,0 +1,4 @@
+// null refinement
+void f(own int*? p) {
+    if (p != null) free(p);
+}

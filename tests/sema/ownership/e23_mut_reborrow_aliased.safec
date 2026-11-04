@@ -1,0 +1,8 @@
+// B2: a mut borrow copied into another mut borrow freezes the first
+void f() {
+    int x = 1;
+    mut int* m = &mut x;
+    mut int* m2 = m;
+    *m = 2;             // error: cannot assign to '*m' while it is borrowed
+    *m2 = 3;
+}

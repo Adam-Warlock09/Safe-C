@@ -1,0 +1,8 @@
+// M7: free would leak an own field
+struct Node { int v; own struct Node*? next; };
+
+void f() {
+    own struct Node* n = new struct Node;
+    n->next = new struct Node;
+    free(n);            // error: free('n') would leak 'n->next'
+}

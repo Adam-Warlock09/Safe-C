@@ -1,0 +1,7 @@
+// D8: arguments left to right, so the second 'a' is already moved
+void two(own int* a, own int* b) { free(a); free(b); }
+
+void f() {
+    own int* a = new int;
+    two(a, a);          // error: use of moved pointer 'a'
+}

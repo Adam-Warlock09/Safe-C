@@ -1,0 +1,11 @@
+// fixpoint through nested loops and null refinement
+void f(int n) {
+    own int*? p = null;
+    while (n) {
+        while (n) {
+            if (p != null) free(p);
+            p = new int;
+        }
+    }
+    if (p != null) free(p);
+}

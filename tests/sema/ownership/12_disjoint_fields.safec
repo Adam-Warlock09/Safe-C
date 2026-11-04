@@ -1,0 +1,8 @@
+// borrowing one field leaves the others usable
+struct P { int a; int b; };
+
+void f(mut struct P* p) {
+    mut int* x = &mut p->a;
+    p->b = 1;
+    *x = 2;
+}

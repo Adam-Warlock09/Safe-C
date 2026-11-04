@@ -1,0 +1,6 @@
+// move, then free the new owner
+void f() {
+    own int* a = new int;
+    own int* b = a;
+    free(b);
+}

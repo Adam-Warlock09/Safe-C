@@ -1,0 +1,5 @@
+// trusted: no checks, but effects apply
+void f() {
+    own int* a = new int;
+    trusted { free(a); }
+}

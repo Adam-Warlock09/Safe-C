@@ -1,0 +1,8 @@
+// M4 on a break path
+void f(int c) {
+    while (c) {
+        own int* a = new int;
+        if (c) break;   // error: 'a' is leaked on 'break'
+        free(a);
+    }
+}

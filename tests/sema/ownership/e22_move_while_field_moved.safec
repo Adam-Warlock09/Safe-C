@@ -1,0 +1,18 @@
+// M6: the receiver would get a dangling field
+struct Node { int v; own struct Node*? next; };
+
+void free_list(own struct Node*? n) {
+    while (n != null) {
+        own struct Node*? nx = n->next;
+        n->next = null;
+        free(n);
+        n = nx;
+    }
+}
+
+void f(own struct Node* n) {
+    own struct Node*? x = n->next;
+    own struct Node* m = n;     // error: cannot move 'n' while 'n->next' is moved out
+    free(m);
+    free_list(x);
+}

@@ -1,0 +1,6 @@
+// re-pointing a borrow parameter at a local: the parameter dies with the body
+void f(mut int* p) {
+    int x = 1;
+    p = &mut x;
+    *p = 2;
+}

@@ -1,0 +1,8 @@
+// a borrow held past the end of the borrowed local's block
+void f() {
+    int*? r = null;
+    {
+        int x = 1;
+        r = &x;
+    }                   // error: 'x' does not live long enough
+}

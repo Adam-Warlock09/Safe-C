@@ -1,0 +1,20 @@
+// T1: a borrow stored through a pointer could outlive what it points to
+void set(mut int** q, int* v) {
+    *q = v;                 // error: borrow type 'int*' cannot be stored through a pointer
+}
+
+void bad(mut int** q) {
+    int x = 1;
+    *q = &x;                // error: borrow type 'int*' cannot be stored through a pointer
+}
+
+int main() {
+    int y = 1;
+    int* r = &y;
+    {
+        int x = 2;
+        mut int** q = &mut r;
+        *q = &x;            // error: borrow type 'int*' cannot be stored through a pointer
+    }
+    return *r;
+}

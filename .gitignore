@@ -13,6 +13,9 @@ stack.hh
 main_parser.o
 ast_dump.o
 sema.o
+borrowck.o
+driver.o
+driver
 
 # macOS
 .DS_Store

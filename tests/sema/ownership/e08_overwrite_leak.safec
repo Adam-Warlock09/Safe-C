@@ -1,0 +1,6 @@
+// M3: overwriting an owner
+void f() {
+    own int* a = new int;
+    a = new int;        // error: assignment to 'a' leaks the value it owns
+    free(a);
+}

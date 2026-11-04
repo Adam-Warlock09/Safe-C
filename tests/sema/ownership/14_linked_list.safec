@@ -1,0 +1,63 @@
+// a whole linked-list program: must produce no diagnostics
+struct Node { int v; own struct Node*? next; };
+struct List { own struct Node*? head; int len; };
+
+void free_list(own struct Node*? n) {
+    while (n != null) {
+        own struct Node*? nx = n->next;
+        n->next = null;
+        free(n);
+        n = nx;
+    }
+}
+
+void push(mut struct List* l, int v) {
+    own struct Node* n = new struct Node;
+    n->v = v;
+    n->next = l->head;
+    l->head = n;
+    l->len = l->len + 1;
+}
+
+own struct Node*? pop_node(mut struct List* l) {
+    own struct Node*? h = l->head;
+    if (h == null) {
+        l->head = null;
+        return null;
+    }
+    l->head = h->next;
+    h->next = null;
+    l->len = l->len - 1;
+    return h;
+}
+
+int sum(struct List* l) {
+    int s = 0;
+    struct Node*? cur = l->head;
+    while (cur != null) {
+        s = s + cur->v;
+        cur = cur->next;
+    }
+    return s;
+}
+
+void clear(mut struct List* l) {
+    own struct Node*? n = l->head;
+    l->head = null;
+    free_list(n);
+    l->len = 0;
+}
+
+int main() {
+    struct List l = (struct List){ .head = null, .len = 0 };
+    push(&mut l, 1);
+    push(&mut l, 2);
+    free_list(pop_node(&mut l));
+    int s = sum(&l);
+    clear(&mut l);
+    // clear() took a mut borrow, so the caller can't know l.head is null
+    own struct Node*? rest = l.head;
+    l.head = null;
+    free_list(rest);
+    return s;
+}

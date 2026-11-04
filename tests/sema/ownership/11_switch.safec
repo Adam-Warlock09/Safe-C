@@ -1,0 +1,12 @@
+// every path through the switch frees exactly once
+void f(int c) {
+    own int* a = new int;
+    switch (c) {
+    case 1:
+        free(a);
+        break;
+    default:
+        free(a);
+        break;
+    }
+}

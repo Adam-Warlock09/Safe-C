@@ -1,0 +1,7 @@
+// M4: leak on an early return
+int f(int c) {
+    own int* a = new int;
+    if (c) return 1;    // error: 'a' is leaked when returning
+    free(a);
+    return 0;
+}
