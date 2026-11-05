@@ -1,0 +1,18 @@
+struct List {
+    own int*? head;
+};
+
+int main() {
+    own int*? node = new int;
+    bool valid = true;
+
+    if (valid) {
+        defer free(node);
+    } else {
+        trusted {
+            raw int* ptr = null;
+        }
+    }
+
+    return 0;
+}

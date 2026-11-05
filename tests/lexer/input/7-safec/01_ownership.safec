@@ -1,0 +1,12 @@
+struct Node {
+    int value;
+    own Node*? next;
+};
+
+int main() {
+    own Node* node = new Node;
+    node->value = 10;
+    free(node);
+
+    return 0;
+}

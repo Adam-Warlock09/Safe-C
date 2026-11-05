@@ -1,0 +1,10 @@
+int main() {
+    int value = 10;
+
+    trusted {
+        raw int* pointer = &value;
+        *pointer = 20;
+    }
+
+    return value;
+}

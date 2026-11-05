@@ -1,0 +1,9 @@
+int calculate(int a, int b, int c) {
+    int result = a + b + c;
+    return result;
+}
+
+int main() {
+    int x = 10, y = 20, z = 30;
+    return calculate(x, y, z);
+}

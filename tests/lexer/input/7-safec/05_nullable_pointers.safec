@@ -1,0 +1,14 @@
+struct Node {
+    int value;
+    own Node*? next;
+};
+
+int main() {
+    own Node*? head = null;
+
+    if (head == null) {
+        return 0;
+    }
+
+    return 1;
+}

@@ -1,0 +1,12 @@
+int main() {
+    int Int = 10;
+    int IF = 20;
+    int While = 30;
+    int Return = 40;
+
+    int Own = 50;
+    int Mut = 60;
+    int New = 70;
+
+    return Int + IF + While + Return + Own + Mut + New;
+}

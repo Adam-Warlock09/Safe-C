@@ -1,0 +1,14 @@
+int main() {
+    int integer = 10;
+    int ifx = 20;
+    int while_count = 5;
+    int return_value = 0;
+
+    int owning = 1;
+    int mutate = 2;
+    int newNode = 3;
+    int trueValue = 4;
+    int nullify = 5;
+
+    return integer + ifx + owning + mutate;
+}

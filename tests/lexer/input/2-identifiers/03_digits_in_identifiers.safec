@@ -1,0 +1,8 @@
+int main() {
+    int value1 = 10;
+    int value2 = 20;
+    int student2026 = 100;
+    int test123case = 5;
+
+    return value1 + value2 + student2026 + test123case;
+}

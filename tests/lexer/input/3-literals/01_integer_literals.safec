@@ -1,0 +1,9 @@
+int main() {
+    int zero = 0;
+    int positive = 123;
+    int negative = -456;
+    int large = 987654321;
+
+    int result = positive + large;
+    return result;
+}

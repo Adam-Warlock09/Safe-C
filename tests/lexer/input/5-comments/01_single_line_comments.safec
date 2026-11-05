@@ -1,0 +1,9 @@
+int main() {
+    // Declare a variable
+    int age = 20;
+
+    // Update the value
+    age = age + 1; // Inline comment
+
+    return age;
+}

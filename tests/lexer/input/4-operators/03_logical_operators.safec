@@ -1,0 +1,10 @@
+int main() {
+    bool a = true;
+    bool b = false;
+
+    bool result1 = a && b;
+    bool result2 = a || b;
+    bool result3 = !a;
+
+    return 0;
+}

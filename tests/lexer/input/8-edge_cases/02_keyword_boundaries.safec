@@ -1,0 +1,11 @@
+int main() {
+    int ifx = 10;
+    int if_value = 20;
+    int owning = 30;
+    int mutable = 40;
+    int newNode = 50;
+    int trueValue = 60;
+    int nullify = 70;
+
+    return ifx + if_value + owning;
+}

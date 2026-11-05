@@ -1,0 +1,19 @@
+int main() {
+    int a = 10;
+    int b = 3;
+
+    int x = a & b;
+    int y = a | b;
+    int z = a ^ b;
+    int p = ~a;
+    int q = a << 2;
+    int r = a >> 1;
+
+    a++;
+    b--;
+
+    int* ptr = &a;
+    int value = *ptr;
+
+    return 0;
+}

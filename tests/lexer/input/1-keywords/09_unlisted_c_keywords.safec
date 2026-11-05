@@ -1,0 +1,23 @@
+int main() {
+    int auto = 1;
+    int do = 2;
+    int goto = 3;
+    int sizeof = 4;
+    int const = 5;
+    int short = 6;
+    int long = 7;
+    int double = 8;
+    int signed = 9;
+    int unsigned = 10;
+    int enum = 11;
+    int union = 12;
+    int inline = 13;
+    int extern = 14;
+    int register = 15;
+    int restrict = 16;
+    int static = 17;
+    int typedef = 18;
+    int volatile = 19;
+
+    return 0;
+}

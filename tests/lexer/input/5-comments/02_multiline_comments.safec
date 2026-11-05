@@ -1,0 +1,9 @@
+int main() {
+    /*
+       This is a multiline comment.
+       It contains multiple lines.
+    */
+    int value = 100;
+
+    return value;
+}

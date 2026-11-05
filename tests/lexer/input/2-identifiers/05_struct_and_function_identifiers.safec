@@ -1,0 +1,20 @@
+struct StudentRecord {
+    int student_id;
+    int semester;
+    float grade_point;
+};
+
+int calculate_total(int first_mark, int second_mark) {
+    int total_score = first_mark + second_mark;
+    return total_score;
+}
+
+int main() {
+    struct StudentRecord student;
+    student.student_id = 101;
+    student.semester = 3;
+    student.grade_point = 8.5;
+
+    int total = calculate_total(90, 95);
+    return total;
+}

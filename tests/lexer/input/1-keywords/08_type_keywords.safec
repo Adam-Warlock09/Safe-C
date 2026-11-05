@@ -1,0 +1,19 @@
+struct Data {
+    void* ptr;
+    bool valid;
+    char letter;
+    int count;
+    float value;
+};
+
+int main() {
+    void* p = null;
+    bool flag = true;
+    char c = 'A';
+    int number = 10;
+    float decimal = 3.14;
+
+    struct Data data;
+
+    return 0;
+}

@@ -1,0 +1,9 @@
+int main() {
+    char letter = 'A';
+    char digit = '7';
+    char newline = '\n';
+    char tab = '\t';
+    char quote = '\'';
+
+    return 0;
+}

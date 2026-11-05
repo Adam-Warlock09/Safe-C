@@ -1,0 +1,9 @@
+int main() {
+    char* greeting = "Hello, Safe-C!";
+    char* empty = "";
+    char* message = "Lexer testing";
+    char* escaped = "Line one\nLine two";
+    char* quoted = "She said \"Hello\"";
+
+    return 0;
+}

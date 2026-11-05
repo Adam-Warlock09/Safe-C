@@ -1,0 +1,10 @@
+void update(mut int* value) {
+    *value = 100;
+}
+
+int main() {
+    int number = 10;
+    update(&mut number);
+
+    return number;
+}

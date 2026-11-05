@@ -1,0 +1,10 @@
+int main() {
+    float pi = 3.14159;
+    float decimal = 0.5;
+    float whole = 10.0;
+    float scientific = 1.2e3;
+    float small = 4.5e-2;
+
+    float result = pi + decimal;
+    return 0;
+}

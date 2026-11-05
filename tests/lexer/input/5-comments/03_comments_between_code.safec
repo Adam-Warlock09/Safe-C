@@ -1,0 +1,12 @@
+int main() {
+    int first = 10;
+
+    /* Comment between declarations */
+
+    int second = 20;
+
+    // Calculate the sum
+    int result = first + second;
+
+    return result;
+}

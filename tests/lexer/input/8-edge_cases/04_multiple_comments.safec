@@ -1,0 +1,12 @@
+// First comment
+int main() {
+    /* Second comment */
+    int value = 10; // Third comment
+
+    /*
+       Fourth comment
+       spans multiple lines
+    */
+
+    return value;
+}

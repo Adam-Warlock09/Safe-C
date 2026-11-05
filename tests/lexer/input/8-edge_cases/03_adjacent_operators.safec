@@ -1,0 +1,13 @@
+int main() {
+    int a = 10;
+    int b = 5;
+
+    bool first = a >= b;
+    bool second = a != b;
+    bool third = a && b;
+
+    a++;
+    b--;
+
+    return 0;
+}

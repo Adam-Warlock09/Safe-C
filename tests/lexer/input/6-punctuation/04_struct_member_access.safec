@@ -1,0 +1,13 @@
+struct Student {
+    int roll;
+    float marks;
+};
+
+int main() {
+    struct Student student;
+
+    student.roll = 101;
+    student.marks = 95.5;
+
+    return student.roll;
+}

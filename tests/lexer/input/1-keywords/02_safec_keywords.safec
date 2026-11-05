@@ -1,0 +1,20 @@
+struct Node {
+    int value;
+    own Node*? next;
+};
+
+void update(mut int* value) {
+    *value = 20;
+}
+
+int main() {
+    own Node* node = new Node;
+
+    raw int* ptr = null;
+
+    trusted {
+        defer free(node);
+    }
+
+    return 0;
+}

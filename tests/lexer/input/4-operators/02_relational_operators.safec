@@ -1,0 +1,13 @@
+int main() {
+    int a = 10;
+    int b = 20;
+
+    bool x = a < b;
+    bool y = a > b;
+    bool z = a <= b;
+    bool p = a >= b;
+    bool q = a == b;
+    bool r = a != b;
+
+    return 0;
+}

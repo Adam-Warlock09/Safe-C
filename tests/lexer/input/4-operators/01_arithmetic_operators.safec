@@ -1,0 +1,12 @@
+int main() {
+    int a = 20;
+    int b = 5;
+
+    int sum = a + b;
+    int difference = a - b;
+    int product = a * b;
+    int quotient = a / b;
+    int remainder = a % b;
+
+    return sum;
+}

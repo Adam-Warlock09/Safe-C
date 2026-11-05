@@ -1,0 +1,8 @@
+int main() {
+    int student_age = 20;
+    int total_marks = 450;
+    int _count = 10;
+    int marks_obtained = 95;
+
+    return student_age + total_marks + _count + marks_obtained;
+}

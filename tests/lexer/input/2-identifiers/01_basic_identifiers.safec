@@ -1,0 +1,15 @@
+int main() {
+    int age = 20;
+    int marks = 95;
+    float percentage = 87.5;
+
+    age = age + 1;
+    marks = marks + 5;
+
+    return age + marks;
+}
+
+int calculate(int first, int second) {
+    int result = first + second;
+    return result;
+}
