@@ -1,0 +1,11 @@
+int first(int a[], int n) {
+    return a[0];
+}
+
+int main() {
+    int values[3];
+    values[0] = 10;
+    values[1] = 20;
+    values[2] = 30;
+    return first(values, 3);
+}

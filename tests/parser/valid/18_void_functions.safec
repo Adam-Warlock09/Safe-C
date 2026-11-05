@@ -1,0 +1,13 @@
+void noop() {
+    return;
+}
+
+void reset(void) {
+    return;
+}
+
+int main() {
+    noop();
+    reset();
+    return 0;
+}

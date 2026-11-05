@@ -1,0 +1,11 @@
+struct Pair {
+    int first;
+    int second;
+};
+
+int main() {
+    struct Pair p;
+    p.first = 10;
+    p.second = 20;
+    return p.first + p.second;
+}

@@ -1,3 +1,4 @@
+[Sema All Phases 1-4] All expression, operator, and narrowing checks passed!
 OK: parsed 4 top-level item(s)
 ---- AST ----
 (program)

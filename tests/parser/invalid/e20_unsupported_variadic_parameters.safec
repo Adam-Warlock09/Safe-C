@@ -1,0 +1,3 @@
+int sum(int count, ...) {
+    return count;
+}

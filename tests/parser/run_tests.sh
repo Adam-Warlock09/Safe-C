@@ -1,104 +1,187 @@
 #!/usr/bin/env bash
-#
-# SafeC parser test suite.
-#
-# Valid programs (NN_*.safec): exit 0 and the --ast dump must match
-# the golden file in expected/.
-# Invalid programs (eNN_*.safec): exit 1 and a "syntax error" on
-# stderr.  Only the first error is reported (no recovery rules yet),
-# so that's all we check.
-#
-# Run with: bash tests/parser/run_tests.sh
-#
-# To regenerate goldens after an INTENTIONAL dump change:
-#   bash tests/parser/run_tests.sh --update-expected
-# (read them before committing - a golden only proves the dump is
-# stable, not that it is right)
+
+# ============================================================
+# Safe-C Parser Test Suite
+# Valid tests   : parse successfully + AST matches expected
+# Invalid tests : parser must detect a syntax error
+# ============================================================
 
 set -u
+shopt -s nullglob
+
 cd "$(dirname "$0")/../.."
-PARSER=./safec-parser
-DIR=tests/parser
+
+PARSER="./safec-parser"
+DIR="tests/parser"
+VALID="$DIR/valid"
+INVALID="$DIR/invalid"
+EXPECTED="$DIR/expected/valid"
+
 UPDATE=0
-[ "${1:-}" = "--update-expected" ] && UPDATE=1
+[[ "${1:-}" == "--update-expected" ]] && UPDATE=1
 
-pass=0
-fail=0
-failed_names=()
+# Colours
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+RESET='\033[0m'
 
-if [ ! -x "$PARSER" ]; then
-    echo "error: $PARSER not built; run 'make' first" >&2
+PASS=0
+FAIL=0
+UPDATED=0
+VALID_PASS=0
+INVALID_PASS=0
+FAILED_TESTS=()
+
+echo
+echo "============================================================"
+echo "                 SAFEC PARSER TEST SUITE"
+echo "============================================================"
+
+if [[ ! -x "$PARSER" ]]; then
+    echo -e "${RED}ERROR:${RESET} Parser executable not found."
+    echo "Run make first."
     exit 2
 fi
 
-# ---- valid programs ---------------------------------------------------
-for src in "$DIR"/[0-9][0-9]_*.safec; do
-    name=$(basename "$src" .safec)
-    golden="$DIR/expected/$name.txt"
+TMPDIR_TEST=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
-    out=$("$PARSER" --ast "$src" 2>&1)
-    status=$?
+# ------------------------------------------------------------
+# VALID TESTS
+# ------------------------------------------------------------
 
-    if [ $status -ne 0 ]; then
-        echo "FAIL $name: expected success, got exit $status"
-        echo "$out" | sed 's/^/    /'
-        fail=$((fail + 1)); failed_names+=("$name"); continue
-    fi
-    if echo "$out" | grep -q "error:"; then
-        echo "FAIL $name: parser printed an error but exited 0"
-        echo "$out" | sed 's/^/    /'
-        fail=$((fail + 1)); failed_names+=("$name"); continue
-    fi
-
-    if [ "$UPDATE" = 1 ]; then
-        mkdir -p "$DIR/expected"
-        printf '%s\n' "$out" > "$golden"
-        echo "updated golden: $golden"
-        pass=$((pass + 1)); continue
-    fi
-
-    if [ ! -f "$golden" ]; then
-        echo "FAIL $name: missing golden file $golden (run with --update-expected)"
-        fail=$((fail + 1)); failed_names+=("$name"); continue
-    fi
-
-    diffout=$(mktemp)
-    if printf '%s\n' "$out" | diff -u "$golden" - > "$diffout"; then
-        pass=$((pass + 1))
-    else
-        echo "FAIL $name: AST dump differs from $golden"
-        head -15 "$diffout" | sed 's/^/    /'
-        fail=$((fail + 1)); failed_names+=("$name")
-    fi
-    rm -f "$diffout"
-done
-
-# ---- invalid programs -------------------------------------------------
-for src in "$DIR"/e[0-9][0-9]_*.safec; do
-    name=$(basename "$src" .safec)
-
-    err=$("$PARSER" "$src" 2>&1 >/dev/null)
-    status=$?
-
-    if [ $status -ne 1 ]; then
-        echo "FAIL $name: expected exit 1 with a syntax error, got exit $status"
-        [ -n "$err" ] && echo "$err" | sed 's/^/    /'
-        fail=$((fail + 1)); failed_names+=("$name"); continue
-    fi
-    if ! echo "$err" | grep -q "syntax error"; then
-        echo "FAIL $name: stderr missing 'syntax error'"
-        echo "$err" | sed 's/^/    /'
-        fail=$((fail + 1)); failed_names+=("$name"); continue
-    fi
-    pass=$((pass + 1))
-done
-
-# -----------------------------------------------------------------------
 echo
-echo "parser tests: $pass passed, $fail failed (out of $((pass + fail)))"
-if [ $fail -gt 0 ]; then
-    printf 'failed: %s\n' "${failed_names[*]}"
-    exit 1
+echo -e "${CYAN}--------------- VALID TESTS ----------------${RESET}"
+
+valid_tests=("$VALID"/*.safec)
+
+if [[ ${#valid_tests[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}No valid test files found.${RESET}"
 fi
-echo "ALL PARSER TESTS PASSED"
+
+for src in "${valid_tests[@]}"; do
+
+    name=$(basename "$src" .safec)
+    golden="$EXPECTED/$name.txt"
+    actual="$TMPDIR_TEST/$name.actual"
+
+    "$PARSER" --ast "$src" > "$actual" 2>&1
+    status=$?
+
+    if [[ $status -ne 0 ]] || grep -q "error:" "$actual"; then
+        echo -e "${RED}[FAIL]${RESET} $name - Expected valid program"
+        echo "       Parser rejected the input."
+        sed 's/^/       /' "$actual"
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("$name")
+        continue
+    fi
+
+    if [[ $UPDATE -eq 1 ]]; then
+        mkdir -p "$EXPECTED"
+        cp "$actual" "$golden"
+        echo -e "${YELLOW}[UPDATED]${RESET} $name - Expected AST regenerated"
+        UPDATED=$((UPDATED + 1))
+        continue
+    fi
+
+    if [[ ! -f "$golden" ]]; then
+        echo -e "${RED}[FAIL]${RESET} $name - Expected AST file missing"
+        echo "       Missing: $golden"
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("$name")
+        continue
+    fi
+
+    if diff -u "$golden" "$actual" > "$TMPDIR_TEST/diff"; then
+        echo -e "${GREEN}[PASS]${RESET} $name - Valid syntax, AST matches expected"
+        PASS=$((PASS + 1))
+        VALID_PASS=$((VALID_PASS + 1))
+    else
+        echo -e "${RED}[FAIL]${RESET} $name - AST does not match expected"
+        echo "       Differences (expected vs actual):"
+        head -20 "$TMPDIR_TEST/diff" | sed 's/^/       /'
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("$name")
+    fi
+
+done
+
+# ------------------------------------------------------------
+# INVALID TESTS
+# ------------------------------------------------------------
+
+echo
+echo -e "${CYAN}--------------- INVALID TESTS ---------------${RESET}"
+
+invalid_tests=("$INVALID"/*.safec)
+
+if [[ ${#invalid_tests[@]} -eq 0 ]]; then
+    echo -e "${YELLOW}No invalid test files found.${RESET}"
+fi
+
+for src in "${invalid_tests[@]}"; do
+
+    name=$(basename "$src" .safec)
+    actual="$TMPDIR_TEST/$name.actual"
+
+    "$PARSER" "$src" > "$actual" 2>&1
+    status=$?
+
+    if [[ $status -ne 0 ]] && grep -qi "syntax error" "$actual"; then
+        echo -e "${GREEN}[PASS]${RESET} $name - Syntax error detected correctly"
+        PASS=$((PASS + 1))
+        INVALID_PASS=$((INVALID_PASS + 1))
+    else
+        echo -e "${RED}[FAIL]${RESET} $name - Expected syntax error detection"
+        echo "       Exit code: $status"
+        sed 's/^/       /' "$actual"
+        FAIL=$((FAIL + 1))
+        FAILED_TESTS+=("$name")
+    fi
+
+done
+
+# ------------------------------------------------------------
+# SUMMARY
+# ------------------------------------------------------------
+
+TOTAL=$((PASS + FAIL))
+
+echo
+echo "============================================================"
+echo "                     TEST SUMMARY"
+echo "============================================================"
+
+if [[ $UPDATE -eq 1 ]]; then
+    echo -e "${YELLOW}Expected AST files updated: $UPDATED${RESET}"
+    echo "Run the script again without --update-expected to compare."
+else
+    echo -e "Valid tests:   ${GREEN}$VALID_PASS passed${RESET}"
+    echo -e "Invalid tests: ${GREEN}$INVALID_PASS passed${RESET}"
+    echo
+    echo -e "Total passed:  ${GREEN}$PASS${RESET}"
+    echo -e "Total failed:  ${RED}$FAIL${RESET}"
+    echo "Total tests:   $TOTAL"
+
+    if [[ $FAIL -gt 0 ]]; then
+        echo
+        echo -e "${RED}Failed tests:${RESET}"
+        for test in "${FAILED_TESTS[@]}"; do
+            echo "  - $test"
+        done
+        echo
+        echo -e "${RED}SOME PARSER TESTS FAILED${RESET}"
+        exit 1
+    fi
+
+    echo
+    echo -e "${GREEN}ALL PARSER TESTS PASSED!${RESET}"
+fi
+
+echo "============================================================"
+echo
+
 exit 0

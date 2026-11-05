@@ -1,0 +1,11 @@
+struct Item {
+    int value;
+};
+
+int main() {
+    struct Item item;
+    struct Item *ptr;
+    ptr = &item;
+    ptr->value = 42;
+    return ptr->value;
+}
