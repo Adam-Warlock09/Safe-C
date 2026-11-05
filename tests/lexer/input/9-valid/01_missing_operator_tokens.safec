@@ -1,0 +1,6 @@
+a &= b;
+a |= b;
+a ^= b;
+a <<= 2;
+a >>= 2;
+void f(int a, int b, int c, ...) { }

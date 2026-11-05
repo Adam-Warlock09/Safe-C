@@ -64,6 +64,11 @@ static int safec_lexer_current_column = 1;
 
 {L}({L}|{D})*   { if (safec_lexer_trace) printf("TOKEN: IDENTIFIER, NUMBER: %d\n", IDENTIFIER); return IDENTIFIER; }
 
+{D}+\.{D}+([eE][+-]?{D}+)?[fF]{2,}                          { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}+[eE][+-]?                                         { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}+([eE][+-]?{D}+)?[fF]?[a-dg-zA-DF-Z_][a-zA-Z0-9_]* { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}*\.{D}*([eE][+-]?{D}+)?[fF]?                       { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+
 0[xX]{H}+       { if (safec_lexer_trace) printf("TOKEN: INT_LITERAL, NUMBER: %d\n", INT_LITERAL); return INT_LITERAL; }
 {D}+            { if (safec_lexer_trace) printf("TOKEN: INT_LITERAL, NUMBER: %d\n", INT_LITERAL); return INT_LITERAL; }
 

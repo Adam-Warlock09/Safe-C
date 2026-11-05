@@ -1,0 +1,4 @@
+char a = 'ab';
+char b = '\q';
+char c = '\x';
+char d = 'a;

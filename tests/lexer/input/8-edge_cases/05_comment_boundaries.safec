@@ -1,0 +1,5 @@
+int a;/*adjacent*/int b;
+// line comment
+int c; /* multi
+line
+comment */ int d;
