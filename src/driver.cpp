@@ -150,7 +150,19 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // ---- 4. Codegen (placeholder)
-    std::printf("codegen: not implemented yet\n");
+    // ---- 4. Codegen
+    std::string out_file = "output.ll";
+    std::ofstream out(out_file);
+    if (!out) {
+        std::cerr << "driver: cannot open " << out_file << " for writing LLVM IR\n";
+        return 1;
+    }
+
+    // Cast safec::Program to TranslationUnit if necessary based on your new_ast.h typedefs
+    CodeGen cg(out);
+    cg.generate((const TranslationUnit&)prog);
+    out.close();
+
+    std::printf("OK: Successfully emitted %s\n", out_file.c_str());
     return 0;
 }
