@@ -1,12 +1,15 @@
 /*
  * driver.cpp - runs the compiler up to a given stage and prints the result.
  *
- *   driver [--till-lexer | --till-parser | --till-sema | --till-codegen] <file.safec>
+ *   driver [options] <file.safec> [c_files...]
  *
  *   --till-lexer    print the token stream
  *   --till-parser   print the AST
  *   --till-sema     run semantic + ownership checks, print diagnostics
- *   --till-codegen  everything (the default); codegen is a placeholder
+ *   --till-codegen  emit LLVM IR (.ll) and stop (alias: --emit-llvm)
+ *   
+ *   -o <file>       output binary name (default: a.out)
+ *   -O2             enable optimizations during clang linkage
  *
  * Exit codes: 0 ok, 1 errors, 2 bad usage.
  */
@@ -14,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -22,6 +26,7 @@
 #include "new_ast.h"
 #include "sema.h"
 #include "tokens.h"
+#include "codegen.h"
 
 // the flex lexer, compiled as C
 extern "C" {
@@ -89,25 +94,55 @@ void SafeCParser::error(const location_type &loc, const std::string &msg) {
 
 // ---- driver
 
-enum Stage { LEXER, PARSER, SEMA, CODEGEN };
+enum Stage { LEXER, PARSER, SEMA, CODEGEN, LINK };
 
 static int usage() {
     std::fprintf(stderr,
-                 "usage: driver [--till-lexer | --till-parser | --till-sema | --till-codegen] <file.safec>\n");
+                 "usage: safec [options] <file.safec> [c_files...]\n"
+                 "Stages:\n"
+                 "  --till-lexer    print token stream\n"
+                 "  --till-parser   print the AST\n"
+                 "  --till-sema     run semantic + ownership checks\n"
+                 "  --emit-llvm     emit LLVM IR and stop (--till-codegen)\n"
+                 "Build Options:\n"
+                 "  -o <file>       output binary name (default: a.out)\n"
+                 "  -O1, -O2, -O3   optimization levels\n");
     return 2;
 }
 
 int main(int argc, char **argv) {
-    Stage till = CODEGEN;
+    Stage till = LINK; // Default to full build pipeline
     const char *file = nullptr;
+    std::string output_bin = "a.out";
+    std::string clang_opts = "";
+    std::string c_files = "";
 
+    // Parse CLI arguments
     for (int i = 1; i < argc; i++) {
-        if      (std::strcmp(argv[i], "--till-lexer") == 0)   till = LEXER;
-        else if (std::strcmp(argv[i], "--till-parser") == 0)  till = PARSER;
-        else if (std::strcmp(argv[i], "--till-sema") == 0)    till = SEMA;
-        else if (std::strcmp(argv[i], "--till-codegen") == 0) till = CODEGEN;
-        else if (argv[i][0] == '-' || file)                   return usage();
-        else                                                  file = argv[i];
+        std::string arg = argv[i];
+        if      (arg == "--till-lexer")  till = LEXER;
+        else if (arg == "--till-parser") till = PARSER;
+        else if (arg == "--till-sema")   till = SEMA;
+        else if (arg == "--till-codegen" || arg == "--emit-llvm") till = CODEGEN;
+        else if (arg == "-o") {
+            if (i + 1 < argc) output_bin = argv[++i];
+            else return usage();
+        }
+        else if (arg == "-O1" || arg == "-O2" || arg == "-O3" || arg == "-g") {
+            clang_opts += arg + " ";
+        }
+        else if (arg.length() >= 6 && (arg.substr(arg.length() - 6) == ".safec" || arg.substr(arg.length() - 3) == ".sc")) {
+            file = argv[i];
+        }
+        else if (arg.length() >= 2 && (arg.substr(arg.length() - 2) == ".c" || arg.substr(arg.length() - 2) == ".o")) {
+            c_files += arg + " ";
+        }
+        else if (arg[0] == '-') {
+            return usage();
+        }
+        else {
+            file = argv[i]; // Fallback if extension isn't exactly .safec/.sc
+        }
     }
     if (!file) return usage();
 
@@ -150,19 +185,32 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // ---- 4. Codegen
-    std::string out_file = "output.ll";
+    // ---- 4. Codegen (Emit LLVM IR)
+    std::string out_file = std::string(file) + ".ll";
     std::ofstream out(out_file);
     if (!out) {
         std::cerr << "driver: cannot open " << out_file << " for writing LLVM IR\n";
         return 1;
     }
 
-    // Cast safec::Program to TranslationUnit if necessary based on your new_ast.h typedefs
-    CodeGen cg(out);
-    cg.generate((const TranslationUnit&)prog);
+    safec::CodeGen cg(out);
+    cg.generate(prog);
     out.close();
 
-    std::printf("OK: Successfully emitted %s\n", out_file.c_str());
+    if (till == CODEGEN) {
+        std::printf("OK: Successfully emitted %s\n", out_file.c_str());
+        return 0;
+    }
+
+    // ---- 5. Link (Invoke Clang)
+    std::string clang_cmd = "clang " + out_file + " " + clang_opts + c_files + " -Wno-override-module -o " + output_bin;
+    int link_status = std::system(clang_cmd.c_str());
+    
+    if (link_status != 0) {
+        std::fprintf(stderr, "Linker Error: clang backend failed to compile the generated LLVM IR.\n");
+        return link_status;
+    }
+
+    std::printf("OK: Successfully compiled %s -> %s\n", file, output_bin.c_str());
     return 0;
 }

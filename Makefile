@@ -2,12 +2,10 @@
 # Needs flex, bison 3.x and a C++17 compiler (the parser is C++).
 #
 # Targets:
-#   make            build the safec-parser, the standalone lexer test binary and the driver
-#   make driver     build the driver (driver --till-lexer|--till-parser|--till-sema|--till-codegen <file>)
-#   make test       run the lexer regression test and the parser test suite
-#   make test-lexer run the existing lexer test (tests/lexer/test_lexer.safec)
-#   make test-parser run the parser test suite (tests/parser/)
-#   make clean      remove build artifacts
+#   make             build the compiler (safec), parser, and lexer
+#   make safec       build the full compiler driver
+#   make test        run all test suites (lexer, parser, sema, codegen)
+#   make clean       remove build artifacts
 
 CC          = cc
 CXX         = c++
@@ -18,7 +16,7 @@ CXXFLAGS    = -std=c++17 -Wall -Wextra -O2 -I. -Isrc
 LEXCFLAGS   = -w -Isrc
 YACCCFLAGS  = -w -Isrc -std=c++17
 
-all: safec-parser lexer driver
+all: safec safec-parser lexer
 
 lex.yy.c: src/lexer.l src/tokens.h
 	$(FLEX) -o $@ src/lexer.l
@@ -56,7 +54,7 @@ codegen_stmt.o: src/codegen_stmt.cpp src/codegen.h src/new_ast.h
 driver.o: src/driver.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h src/sema.h src/tokens.h src/codegen.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/driver.cpp
 
-driver: driver.o parser.tab.o lexer-lib.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
+safec: driver.o parser.tab.o lexer-lib.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
 	$(CXX) -o $@ $^
 
 lexer: lexer.o
@@ -72,12 +70,19 @@ test-lexer: lexer
 test-parser: safec-parser
 	bash tests/parser/run_tests.sh
 
-test: test-lexer test-parser
+test-sema: safec
+	bash tests/sema/run_tests.sh
+
+test-codegen: safec
+	bash tests/codegen/run_tests.sh
+
+test: test-lexer test-parser test-sema test-codegen
 
 clean:
-	rm -f safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
+	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
 	      parser.tab.o parser.tab.cpp parser.tab.hpp parser.tab.c parser.tab.h \
 	      location.hh position.hh stack.hh main_parser.o ast_dump.o sema.o \
-	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o
+	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o \
+	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser clean
+.PHONY: all test test-lexer test-parser test-sema test-codegen clean

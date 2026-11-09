@@ -1,3 +1,4 @@
+// codegen.h
 #pragma once
 #include "new_ast.h"
 #include <iostream>
@@ -6,9 +7,11 @@
 #include <unordered_map>
 #include <vector>
 
+namespace safec {
+
 struct CGVarInfo {
     std::string llvm_ptr; // e.g. "%x.addr" or "@g_var"
-    Type type;
+    const Type* type;     // CHANGED: Must be a pointer because Type is abstract
 };
 
 struct CGScopeFrame {
@@ -22,12 +25,12 @@ struct CGScopeFrame {
 class CodeGen {
 public:
     explicit CodeGen(std::ostream& out) : out_(out) {}
-    void generate(const TranslationUnit& tu);
+    void generate(const Program& tu);
 
 private:
     std::ostream& out_;
     std::ostringstream body_ir_;     // Buffers instructions for current function
-    const TranslationUnit* tu_ = nullptr;
+    const Program* prog_ = nullptr;
     const FunctionDecl* current_fn_ = nullptr;
 
     int temp_counter_ = 0;
@@ -63,21 +66,20 @@ private:
         }
     }
 
-    // --- Person A (src/codegen_expr.cpp) ---
     void emit_module_header();
-    std::string llvm_type(const Type& t) const;
-    std::string llvm_sizeof_expr(const Type& t);
-    std::string llvm_zero_init(const Type& t) const;
+    
+    // CHANGED: Pass Type as pointer
+    std::string llvm_type(const Type* t) const;
+    std::string llvm_zero_init(const Type* t) const;
+    
     int get_struct_field_index(const std::string& struct_name, const std::string& field_name) const;
 
     std::string gen_expr(const Expr* e);
     std::string gen_lvalue(const Expr* e);
     std::string gen_short_circuit_and(const BinaryExpr* b);
     std::string gen_short_circuit_or(const BinaryExpr* b);
-    void emit_Store_compound_lit(const std::string& dest_ptr, const CompoundLitExpr* cl);
-    std::string to_bool_i1(const std::string& val, const Type& t);
+    void emit_Store_compound_lit(const std::string& dest_ptr, const CompoundLiteralExpr* cl);
 
-    // --- Person B (src/codegen_stmt.cpp) ---
     void gen_function(const FunctionDecl& fn);
     void emit_entry_allocas(const Stmt* s);
     void gen_stmt(const Stmt* s);
@@ -89,3 +91,5 @@ private:
     void emit_defers_for_jump(bool is_break);
     CGVarInfo lookup_var(const std::string& name) const;
 };
+
+} // namespace safec
