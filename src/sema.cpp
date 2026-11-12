@@ -828,7 +828,11 @@ namespace safec {
 					}
 				}
 
-				checkStmt(fd->body.get(), prog);
+				// The body's top-level statements should share the parameters' scope (as in C),
+				// so int f(int a) { int a; } is a duplicate. Inner blocks still get their own.
+				for (auto& s : fd->body->body) {
+					checkStmt(s.get(), prog);
+				}
 
 				// Simple fall-off check : Warning if non-void function doesn't end with a return statement
 				if (retType != prog.types.voidType()) {
