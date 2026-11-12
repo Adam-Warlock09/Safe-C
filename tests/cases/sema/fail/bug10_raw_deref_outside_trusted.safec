@@ -1,0 +1,26 @@
+// Bug 10: a raw pointer can be dereferenced outside `trusted`. Indexing a
+// raw pointer is already checked; * and -> are not.
+
+struct S {
+    int f;
+};
+
+int read_deref(raw int* p) {
+    return *p;                      // error
+}
+
+void write_deref(raw int* p) {
+    *p = 1;                         // error
+}
+
+int read_arrow(raw struct S* s) {
+    return s->f;                    // error
+}
+
+int inside_trusted_is_fine(raw int* p) {
+    int v = 0;
+    trusted {
+        v = *p;                     // no error: this is what trusted is for
+    }
+    return v;
+}

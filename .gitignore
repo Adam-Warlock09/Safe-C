@@ -20,3 +20,6 @@ driver
 
 # macOS
 .DS_Store
+
+# LLVM IR the safec driver writes next to each compiled file
+*.safec.ll

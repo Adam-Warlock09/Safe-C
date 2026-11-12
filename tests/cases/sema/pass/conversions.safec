@@ -1,0 +1,37 @@
+// Every implicit conversion SafeC allows.
+
+void takes_borrow(int* p) {
+}
+
+void takes_mut(mut int* p) {
+}
+
+void takes_nullable(int*? p) {
+}
+
+int takes_array(int xs[]) {
+    return xs[0];
+}
+
+int main() {
+    char c = 65;                // int -> char
+    int i = c;                  // char -> int
+    bool b = i;                 // int -> bool
+    int j = b;                  // bool -> int
+    float f = i;                // int -> float
+    int k = f;                  // float -> int
+    int*? n = null;             // null -> T*?
+    takes_nullable(n);
+    int* p = &i;
+    takes_nullable(p);          // T* -> T*?
+    own int* o = new int;
+    takes_borrow(o);            // own T* -> T*      (a borrow, not a move)
+    takes_mut(o);               // own T* -> mut T*  (a borrow, not a move)
+    mut int* m = &mut j;
+    takes_borrow(m);            // mut T* -> T*
+    own int*? on = o;           // own T* -> own T*? (a move)
+    if (on != null) free(on);
+    int arr[3];
+    arr[0] = k;
+    return takes_array(arr);    // T[3] -> T[]
+}

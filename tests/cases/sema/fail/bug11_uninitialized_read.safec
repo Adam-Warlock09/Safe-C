@@ -1,0 +1,28 @@
+// Bug 11: reading a variable before anything was assigned to it is
+// accepted. (Owners already get this check from the borrow checker.)
+
+struct S {
+    int f;
+};
+
+int never_set() {
+    int x;
+    return x;                       // error
+}
+
+int set_on_one_path(int c) {
+    int y;
+    if (c) y = 1;
+    return y;                       // error -- only assigned when c is true
+}
+
+int struct_field() {
+    struct S s;
+    return s.f;                     // error
+}
+
+int set_before_read() {
+    int z;
+    z = 3;
+    return z;                       // no error: assigned before the read
+}

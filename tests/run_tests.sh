@@ -18,6 +18,14 @@
 #            fail: nonzero exit.
 #   parser   safec --till-parser. pass: exit 0 and the AST matches.
 #            fail: nonzero exit with a "syntax error".
+#   sema     safec --till-sema, run from both tests/cases/sema (type
+#            checking) and tests/cases/borrowck (ownership and borrows).
+#            pass: exit 0. fail: nonzero exit. Both: every diagnostic matches
+#            a marker comment in the test file, and every marker is hit:
+#              // error: <text>    an error on this line containing <text>
+#              // warning: <text>  the same for a warning
+#              // error            any error on this line
+#            Case is ignored, and anything after " -- " is just a comment.
 # In every stage a compiler crash counts as a failure, even for a fail test.
 #
 # tests/known_bugs.txt lists tests that fail today because of a known bug.
@@ -34,7 +42,15 @@ cd "$(dirname "$0")/.." || exit 2          # run from the repo root
 COMPILER="./safec"
 CASES="tests/cases"
 KNOWN="tests/known_bugs.txt"
-STAGES="lexer parser sema codegen safec"
+STAGES="lexer parser sema borrowck codegen safec"
+
+# the flag a stage belongs to: --sema covers both sema and borrowck
+flag_of() {
+    case "$1" in
+        borrowck) echo sema ;;
+        *)        echo "$1" ;;
+    esac
+}
 
 usage() {
     sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
@@ -139,6 +155,59 @@ case_parser() {   # $1 = pass|fail, $2 = file; expected output is the AST
     if [ "$1" = pass ]; then expect_accept "$2"; else expect_reject "syntax error"; fi
 }
 
+# Checks diagnostics against the markers in the test file:
+#   // error: <text>      an error on this line whose message contains <text>
+#   // warning: <text>    the same for a warning
+#   // error              any error on this line (for bugs whose message
+#                         doesn't exist yet)
+# Matching ignores case, and anything after " -- " is a comment. Every
+# marker needs a matching diagnostic, and every error or warning the
+# compiler reports needs a marker on its line. Notes are ignored.
+check_markers() {   # $1 = file
+    awk '
+        match($0, /\/\/[ \t]*(error|warning)(:|[ \t]*$)/) {
+            rest = substr($0, RSTART)
+            kind = (rest ~ /^\/\/[ \t]*error/) ? "error" : "warning"
+            sub(/^\/\/[ \t]*(error|warning):?[ \t]*/, "", rest)
+            i = index(rest, " -- "); if (i) rest = substr(rest, 1, i - 1)
+            sub(/[ \t]+$/, "", rest)
+            print kind "\t" NR "\t" rest
+        }' "$1" > "$TMP/want"
+
+    sed -nE 's/^[^:]*:([0-9]+)(:[0-9]+)?: (error|warning): (.*)$/\3	\1	\4/p' "$TMP/err" > "$TMP/got"
+
+    awk -F'\t' '
+        FILENAME == ARGV[1] { nw++; wk[nw] = $1; wl[nw] = $2; wt[nw] = tolower($3); next }
+        { ng++; gk[ng] = $1; gl[ng] = $2; gm[ng] = $3 }
+        END {
+            bad = 0
+            for (i = 1; i <= nw; i++) {
+                ok = 0
+                for (j = 1; j <= ng; j++)
+                    if (gk[j] == wk[i] && gl[j] == wl[i] && (wt[i] == "" || index(tolower(gm[j]), wt[i]) > 0)) ok = 1
+                if (!ok) { printf "missing %s on line %s: %s\n", wk[i], wl[i], (wt[i] == "" ? "(any)" : wt[i]); bad = 1 }
+            }
+            for (j = 1; j <= ng; j++) {
+                ok = 0
+                for (i = 1; i <= nw; i++) if (gk[j] == wk[i] && gl[j] == wl[i]) ok = 1
+                if (!ok) { printf "unexpected %s on line %s: %s\n", gk[j], gl[j], gm[j]; bad = 1 }
+            }
+            exit bad
+        }' "$TMP/want" "$TMP/got" > "$TMP/why"
+}
+
+case_sema() {   # $1 = pass|fail, $2 = file
+    run_compiler --till-sema "$2" || return 1
+    if [ "$1" = pass ]; then
+        expect_accept "$2" || return 1
+    else
+        expect_reject || return 1
+    fi
+    check_markers "$2"
+}
+
+case_borrowck() { case_sema "$@"; }   # same command; the borrow checker runs at the end of sema
+
 # ---- running a stage
 
 TOTAL_PASS=0; TOTAL_KNOWN=0; TOTAL_BAD=0
@@ -192,12 +261,15 @@ run_stage() {   # $1 = stage name
 
 reached=0
 for stage in $STAGES; do
-    if [ "$only" -eq 1 ]; then
-        [ "$stage" = "$target" ] && run_stage "$stage"
-    elif [ $reached -eq 0 ]; then
+    flag=$(flag_of "$stage")
+    if [ "$flag" = "$target" ]; then
+        reached=1
+    elif [ $reached -eq 1 ]; then
+        break                           # past the chosen stage
+    fi
+    if [ "$only" -eq 0 ] || [ "$flag" = "$target" ]; then
         run_stage "$stage"
     fi
-    [ "$stage" = "$target" ] && reached=1
 done
 
 echo

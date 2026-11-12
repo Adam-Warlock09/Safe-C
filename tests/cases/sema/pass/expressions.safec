@@ -1,0 +1,51 @@
+// Every operator, applied to types it accepts.
+
+struct S {
+    int f;
+};
+
+int ops(int a, int b, char c, float x, bool t) {
+    int r = a + b - a * b / 2 % 3;
+    r = (a & b) | (a ^ b) | (a << 2) | (b >> 1) | ~a;
+    r = -a + +b;
+    r = c + 1;                              // char promotes to int
+    float y = x * 2 + a;                    // int promotes to float
+    bool rel = a < b && b <= a || a > b && a >= b;
+    bool eq = a == b || x != y;
+    bool lg = !t && c == 'a';
+    r += 1; r -= 1; r *= 2; r /= 2; r %= 5;
+    r &= 7; r |= 1; r ^= 2; r <<= 1; r >>= 1;
+    r++; ++r; r--; --r;
+    int big = 2147483647;                   // the largest int literal
+    int arr[4];
+    arr[3] = r;
+    arr[c - 'a'] = 0;                       // any integer index
+    if (rel || eq || lg) r = arr[3];
+    return r + big;
+}
+
+int pointers(int a, int b) {
+    int* p1 = &a;
+    int* p2 = &b;
+    int*? n = null;
+    bool same = p1 == p2;                   // pointers to the same type
+    bool none = n == null;                  // a nullable pointer against null
+    if (same || none) return *p1;
+    return *p2;
+}
+
+int memory() {
+    struct S s = (struct S){ 5 };           // compound literal, positional
+    own struct S* h = new struct S;         // new T gives own T*
+    h->f = s.f;
+    int v = h->f;
+    free(h);
+    int w = 0;
+    mut int* m = &mut w;                    // &mut gives mut T*
+    *m = v;
+    return *m;
+}
+
+int main() {
+    return ops(1, 2, 'a', 1.5, true) + pointers(1, 2) + memory();
+}

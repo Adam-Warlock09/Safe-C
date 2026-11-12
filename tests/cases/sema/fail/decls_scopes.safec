@@ -1,0 +1,39 @@
+// Declaration and scope errors, one per declaration or function.
+
+struct Dup {
+    int a;
+};
+
+struct Dup {                        // error: duplicate struct name: 'Dup'
+    int b;
+};
+
+struct Fields {
+    int a;
+    int a;                          // error: duplicate field name: 'a'
+};
+
+int gname;
+int gname;                          // error: duplicate global name: 'gname'
+
+void shared() {
+}
+
+int shared;                         // error: duplicate global name: 'shared' -- functions and globals share one namespace
+
+int params(int a, int a) {          // error: duplicate parameter name: 'a'
+    return 0;
+}
+
+void locals() {
+    int x = 1;
+    int x = 2;                      // error: duplicate local variable 'x'
+}
+
+void self_init() {
+    int y = y;                      // error: undeclared identifier: 'y' -- a name is only visible after its declarator
+}
+
+int main(int argc) {                // error: main() must not take any arguments
+    return 0;
+}

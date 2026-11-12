@@ -1,0 +1,49 @@
+// Type forms that must be accepted.
+
+struct Node {
+    int v;
+    own struct Node*? next;     // a struct can own a pointer to its own type
+};
+
+struct A {
+    own struct B*? b;           // ...or to a struct defined later
+};
+
+struct B {
+    int arr[3];
+    own struct A*? a;
+};
+
+struct Wrap {
+    struct Node inner;          // another struct by value
+    char name[8];
+};
+
+int sum(int xs[], int n) {      // unsized array, only allowed on a parameter
+    int s = 0;
+    for (int i = 0; i < n; i++) s += xs[i];
+    return s;
+}
+
+void nothing() {
+}
+
+float half(float f) {
+    return f / 2;
+}
+
+bool flag(char c) {
+    return c == 'y';
+}
+
+int main() {
+    int grid[2][3];
+    int four[2 * 2];            // a constant expression as the size
+    four[0] = 1; four[1] = 2; four[2] = 3; four[3] = 4;
+    grid[1][2] = four[3];
+    int* p = &grid[1][2];       // plain T* is a read borrow
+    int** pp = &p;              // multi-level pointers
+    raw char* r;                // raw pointers can be declared anywhere
+    nothing();
+    return sum(four, 4) + **pp;
+}

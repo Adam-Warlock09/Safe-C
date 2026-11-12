@@ -1,0 +1,14 @@
+// Bug 28: a parameter can be declared again at the top level of the
+// function body. In C both are in the same scope, so it's a duplicate.
+
+int f(int a) {
+    int a = 1;                      // error
+    return a;
+}
+
+int g(int b) {
+    {
+        int b = 2;                  // no error: an inner block may shadow a parameter
+    }
+    return b;
+}

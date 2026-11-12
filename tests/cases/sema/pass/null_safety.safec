@@ -1,0 +1,51 @@
+// Nullable pointers used safely: each dereference is behind a null check.
+
+struct N {
+    int v;
+    own struct N*? next;
+};
+
+int if_not_null(struct N*? p) {
+    if (p != null) return p->v;
+    return 0;
+}
+
+int else_branch(struct N*? p) {
+    int r = 0;
+    if (p == null) r = -1;
+    else r = p->v;                  // narrowed in the else branch
+    return r;
+}
+
+int after_early_return(struct N*? p) {
+    if (p == null) return 0;
+    return p->v;                    // narrowed for the rest of the function
+}
+
+int null_on_left(struct N*? p) {
+    if (null != p) return p->v;
+    return 0;
+}
+
+int walk(struct N*? p) {
+    int s = 0;
+    while (p != null) {
+        s += p->v;                  // narrowed inside the loop body...
+        p = p->next;                // ...until p is assigned
+    }
+    return s;
+}
+
+own int*? nothing() {
+    return null;                    // null as a nullable return value
+}
+
+void take(int*? p) {
+}
+
+int main() {
+    take(null);                     // null as a nullable argument
+    own int*? q = nothing();
+    if (q != null) free(q);
+    return 0;
+}

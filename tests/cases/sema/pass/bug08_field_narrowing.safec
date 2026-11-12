@@ -1,0 +1,31 @@
+// Bug 8: Sema only narrows plain variable names, so a field that was just
+// checked against null still counts as nullable. The whitepaper's
+// list_pop does exactly this.
+
+struct Node {
+    int value;
+    own struct Node*? next;
+};
+
+struct List {
+    own struct Node*? head;
+};
+
+bool list_pop(mut struct List* list, mut int* out_value) {
+    if (list->head == null) return false;
+    own struct Node* n = list->head;            // narrowed by the early return
+    list->head = n->next;
+    n->next = null;
+    *out_value = n->value;
+    free(n);
+    return true;
+}
+
+int peek(struct List* list) {
+    if (list->head != null) return list->head->value;
+    return -1;
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,16 @@
+// Bug 29: a positional initializer that follows a designated one should
+// fill the next field (as in C). Sema starts over from the first field
+// instead, and never notices that a field gets two values.
+
+struct P {
+    int x;
+    int y;
+};
+
+struct P past_the_end() {
+    return (struct P){ .y = 1, 2 };         // error -- no field follows y
+}
+
+struct P three_values() {
+    return (struct P){ .x = 1, .y = 2, 3 }; // error -- no field follows y
+}

@@ -1,0 +1,141 @@
+// Operator and expression errors, one per function.
+
+struct S {
+    int f;
+};
+
+int one(int a) {
+    return a;
+}
+
+void arith_on_pointer(int* p) {
+    int x = p * 2;                  // error: invalid pointer operands to binary '*'
+}
+
+void mod_on_float(float f) {
+    float g = f % 2;                // error: requires integer operands
+}
+
+void shift_on_float(float f) {
+    int g = 1 << f;                 // error: requires integer operands
+}
+
+void bitnot_on_float(float f) {
+    float g = ~f;                   // error: requires integer type
+}
+
+void minus_on_struct(struct S s) {
+    int g = -s;                     // error: requires arithmetic type
+}
+
+void not_on_struct(struct S s) {
+    bool b = !s;                    // error: must be of scalar type
+}
+
+void pointer_arith_outside_trusted(raw int* p) {
+    raw int* q = p + 1;             // error: not allowed outside 'trusted' blocks
+}
+
+void pointer_arith_on_borrow(int* p) {
+    int* q = p + 1;                 // error: only allowed on 'raw' pointers
+}
+
+void compare_structs(struct S a, struct S b) {
+    bool e = a == b;                // error: cannot compare incompatible types
+}
+
+void compare_different_pointers(int* p, float* q) {
+    bool e = p == q;                // error: cannot compare pointers to different types
+}
+
+void literal_too_big() {
+    int x = 3000000000;             // error: does not fit in 'int'
+}
+
+void deref_int(int x) {
+    int y = *x;                     // error: cannot dereference non-pointer type
+}
+
+void deref_void(void* p) {
+    int y = *p;                     // error: cannot dereference 'void*'
+}
+
+void dot_on_pointer(struct S* p) {
+    int y = p.f;                    // error: requires struct type
+}
+
+void arrow_on_struct(struct S s) {
+    int y = s->f;                   // error: requires pointer type
+}
+
+void address_of_rvalue() {
+    int* p = &(1 + 2);              // error: cannot take address of an rvalue
+}
+
+void increment_rvalue() {
+    (1 + 2)++;                      // error: must be an lvalue
+}
+
+void increment_pointer(int* p) {
+    p++;                            // error: requires arithmetic lvalue
+}
+
+void assign_to_rvalue(int a) {
+    a + 1 = 2;                      // error: must be a modifiable lvalue
+}
+
+void assign_array() {
+    int a[2];
+    int b[2];
+    a = b;                          // error: cannot assign to array
+}
+
+void compound_assign_float(float f) {
+    f %= 2;                         // error: requires integer operands
+}
+
+void wrong_argument_count() {
+    int x = one(1, 2);              // error: call expected 1 arguments, but received 2
+}
+
+void wrong_argument_type(struct S s) {
+    int x = one(s);                 // error: cannot implicitly convert
+}
+
+void index_non_array(int x) {
+    int y = x[0];                   // error: not an array
+}
+
+void index_with_float(float f) {
+    int a[2];
+    int y = a[f];                   // error: array subscript is not an integer
+}
+
+void index_out_of_bounds() {
+    int a[2];
+    int y = a[2];                   // error: out of bounds
+}
+
+void new_void() {
+    own void* p = new void;         // error: cannot allocate 'void'
+}
+
+void free_borrow(int* p) {
+    free(p);                        // error: requires an owning pointer
+}
+
+void free_int(int x) {
+    free(x);                        // error: requires an owning pointer
+}
+
+struct S compound_duplicate() {
+    return (struct S){ .f = 1, .f = 2 };    // error: duplicate initialization of field 'f'
+}
+
+struct S compound_too_many() {
+    return (struct S){ 1, 2 };      // error: too many initializers
+}
+
+int compound_not_struct() {
+    return (int){ 1 };              // error: compound literal requires struct type
+}

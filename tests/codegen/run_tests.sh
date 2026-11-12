@@ -3,7 +3,7 @@
 # End-to-end testing: Emits LLVM IR, and executes binaries if main() exists.
 
 COMPILER="./safec"
-TEST_DIR="tests/sema/ownership"
+TEST_DIR="tests/cases/borrowck/pass"   # moved here; this runner is replaced in step 5
 PASSED=0
 FAILED=0
 

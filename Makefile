@@ -4,8 +4,8 @@
 # Targets:
 #   make             build the compiler (safec), parser, and lexer
 #   make safec       build the full compiler driver
-#   make test        run all test suites (lexer, parser, codegen)
-#   make test-lexer  run the lexer stage of tests/run_tests.sh (likewise test-parser)
+#   make test        run all test suites (lexer, parser, sema, codegen)
+#   make test-lexer  run the lexer stage of tests/run_tests.sh (likewise test-parser, test-sema)
 #   make clean       remove build artifacts
 
 CC          = cc
@@ -72,10 +72,13 @@ test-lexer:
 test-parser:
 	bash tests/run_tests.sh --parser --only
 
+test-sema:
+	bash tests/run_tests.sh --sema --only
+
 test-codegen: safec
 	bash tests/codegen/run_tests.sh
 
-test: test-lexer test-parser test-codegen
+test: test-lexer test-parser test-sema test-codegen
 
 clean:
 	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
@@ -84,4 +87,4 @@ clean:
 	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o \
 	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser test-codegen clean
+.PHONY: all test test-lexer test-parser test-sema test-codegen clean

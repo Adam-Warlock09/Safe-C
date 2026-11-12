@@ -1,0 +1,58 @@
+// Nullable pointers used without a null check, one per function.
+
+struct N {
+    int v;
+    own struct N*? next;
+};
+
+void takes(int* p) {
+}
+
+own int*? maybe() {
+    return null;
+}
+
+int deref_nullable(int*? p) {
+    return *p;                      // error: cannot dereference nullable pointer
+}
+
+int arrow_nullable(struct N*? p) {
+    return p->v;                    // error: cannot use '->' on nullable pointer
+}
+
+void pass_nullable(int*? p) {
+    takes(p);                       // error: cannot implicitly convert nullable pointer
+}
+
+void pass_null() {
+    takes(null);                    // error: 'null' can only be assigned to a nullable pointer type
+}
+
+own int* return_null() {
+    return null;                    // error: 'null' can only be assigned to a nullable pointer type
+}
+
+void free_nullable_rvalue() {
+    free(maybe());                  // error: requires a variable or field
+}
+
+int used_after_the_if(int*? p) {
+    if (p != null) {
+    }
+    return *p;                      // error: cannot dereference nullable pointer -- the check only covers the if body
+}
+
+int wrong_branch(int*? p) {
+    if (p == null) {
+        return *p;                  // error: cannot dereference nullable pointer -- p is null here
+    }
+    return 0;
+}
+
+int reassigned(struct N*? p, struct N*? q) {
+    if (p != null) {
+        p = q;
+        return p->v;                // error: cannot use '->' on nullable pointer -- the assignment undoes the check
+    }
+    return 0;
+}

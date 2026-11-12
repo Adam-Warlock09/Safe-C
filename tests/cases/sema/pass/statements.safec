@@ -1,0 +1,66 @@
+// Statements that must be accepted.
+
+int g = 3 + 4 * 2;              // a constant global initializer
+float gf = -1.5;
+
+int classify(int x) {
+    switch (x) {
+        case 0:
+            return 10;
+        case 1:
+        case 2: {               // falls through from case 1
+            int y = x * 2;
+            return y;
+        }
+        case 'a':               // a char constant is an integer
+            break;
+        default:
+            break;
+    }
+    return -1;
+}
+
+int loops(int n) {
+    int s = 0;
+    while (n > 0) {
+        n--;
+        if (n == 3) continue;
+        if (s > 100) break;
+        s += n;
+    }
+    for (;;) {
+        break;
+    }
+    for (int i = 0; i < 3; i++) s += i;
+    if (n) s++; else s--;       // an int as a condition
+    int*? p = null;
+    if (p) s++;                 // a pointer as a condition
+    return s;
+}
+
+void early(int x) {
+    if (x) return;
+    g = x;
+}
+
+int with_defer() {
+    int r = 0;
+    {
+        defer r = r + 1;        // runs when this block ends
+        r = 5;
+    }
+    trusted {
+        r = r * 2;
+    }
+    return r;
+}
+
+int no_final_return(int x) {    // warning: may exit without returning -- the simple check only looks at the last statement
+    if (x) return 1;
+    else return 2;
+}
+
+int main() {
+    early(0);
+    return classify(1) + loops(5) + g + with_defer() + no_final_return(1);
+}

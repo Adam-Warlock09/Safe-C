@@ -1,0 +1,17 @@
+// Name lookup that must be accepted: variables, functions, fields.
+
+struct P {
+    int x;
+    int y;
+};
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    struct P p = (struct P){ .y = 2, .x = 1 };   // designators in any order
+    p.x = add(p.x, p.y);
+    struct P* r = &p;
+    return r->x + r->y;
+}

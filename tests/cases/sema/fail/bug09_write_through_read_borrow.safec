@@ -1,0 +1,26 @@
+// Bug 9: writing through a read borrow (T*) is accepted. Only own and mut
+// pointers may be written through.
+
+struct S {
+    int f;
+};
+
+void assign_deref(int* p) {
+    *p = 1;                         // error
+}
+
+void assign_field(struct S* s) {
+    s->f = 2;                       // error
+}
+
+void increment_through(int* p) {
+    (*p)++;                         // error
+}
+
+void compound_assign_through(int* p) {
+    *p += 1;                        // error
+}
+
+void through_mut_is_fine(mut int* p) {
+    *p = 1;                         // no error: mut borrows may write
+}

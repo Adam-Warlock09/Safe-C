@@ -1,0 +1,108 @@
+// Statement errors, one per function.
+
+struct S {
+    int f;
+};
+
+int one() {
+    return 1;
+}
+
+int nonconstant_global = one();     // error: global initializers must be constants
+
+void struct_condition(struct S s) {
+    if (s) {                        // error: condition must be of scalar type
+    }
+}
+
+void while_struct_condition(struct S s) {
+    while (s) {                     // error: condition must be of scalar type
+    }
+}
+
+void stray_break() {
+    break;                          // error: not within a loop or switch
+}
+
+void stray_continue() {
+    continue;                       // error: not within a loop
+}
+
+void continue_in_switch(int x) {
+    switch (x) {
+        case 0:
+            continue;               // error: not within a loop
+    }
+}
+
+int return_without_value() {
+    return;                         // error: non-void function must return a value
+}
+
+void return_value_from_void() {
+    return 1;                       // error: cannot return a value from a void function
+}
+
+int return_wrong_type(struct S s) {
+    return s;                       // error: cannot implicitly convert
+}
+
+void switch_on_float(float f) {
+    switch (f) {                    // error: switch condition must be an integer type
+        default:
+            break;
+    }
+}
+
+void duplicate_case(int x) {
+    switch (x) {
+        case 1:
+            break;
+        case 1:                     // error: duplicate case value in switch
+            break;
+    }
+}
+
+void nonconstant_case(int x, int y) {
+    switch (x) {
+        case y:                     // error: case value must be a constant integer
+            break;
+    }
+}
+
+void two_defaults(int x) {
+    switch (x) {
+        default:
+            break;
+        default:                    // error: one default case
+            break;
+    }
+}
+
+void return_in_defer() {
+    defer {
+        return;                     // error: cannot return from within a defer block
+    }
+}
+
+void break_in_defer() {
+    while (1) {
+        defer {
+            break;                  // error: cannot break out of a defer block
+        }
+    }
+}
+
+void nested_defer() {
+    defer {
+        defer {                     // error: cannot nest defer blocks
+        }
+    }
+}
+
+void defer_in_case(int x) {
+    switch (x) {
+        case 0:
+            defer x = 1;            // error: 'defer' cannot appear directly in a switch case
+    }
+}

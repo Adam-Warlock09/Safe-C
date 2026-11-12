@@ -1,0 +1,75 @@
+// Type resolution errors, one per declaration or function.
+
+struct UsesMissing {
+    struct Missing m;               // error: unknown struct type: 'Missing'
+};
+
+struct Self {
+    struct Self s;                  // error: cannot contain itself by value
+};
+
+struct Loop1 {
+    struct Loop2 l;                 // error: cannot contain itself by value -- through Loop2
+};
+
+struct Loop2 {
+    struct Loop1 l;                 // reported once, on Loop1: one mistake, one error
+};
+
+struct VoidField {
+    void v;                         // error: field type cannot be void
+};
+
+struct OwnField {
+    own int* p;                     // error: must be nullable -- new zero-fills fields
+};
+
+struct BorrowField {
+    int* p;                         // error: cannot be stored in a struct field
+};
+
+int* global_borrow;                 // error: cannot be stored in a global variable
+own int*? global_own;               // error: global variable cannot have owning type
+
+void void_param(void x) {           // error: parameter cannot have void type
+}
+
+void void_local() {
+    void x;                         // error: local variable cannot have void type
+}
+
+void void_array() {
+    void a[3];                      // error: array element type cannot be void
+}
+
+void zero_size() {
+    int a[0];                       // error: array size must be greater than zero
+}
+
+void negative_size() {
+    int a[-1];                      // error: array size must be greater than zero
+}
+
+void variable_size(int n) {
+    int a[n];                       // error: array size must be a constant integer
+}
+
+void unsized_local() {
+    int a[];                        // error: only allowed on function parameters
+}
+
+void qualifier_without_pointer() {
+    own int x;                      // error: pointer qualifier applied to non-pointer type
+}
+
+void borrow_array() {
+    int* a[2];                      // error: cannot be stored in an array
+}
+
+void own_array() {
+    own int*? a[2];                 // error: arrays of owning type
+}
+
+int* returns_borrow(int* p) {       // error: cannot be returned from a function
+    return p;
+}

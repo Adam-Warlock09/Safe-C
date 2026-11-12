@@ -1,0 +1,13 @@
+// Pointer rules that are already enforced, one per function.
+
+void raw_index_outside_trusted(raw int* r) {
+    int v = r[0];                   // error: only allowed inside 'trusted' blocks
+}
+
+void index_borrow(int* p) {
+    int v = p[0];                   // error: only allowed on 'raw' pointers
+}
+
+void mut_borrow_of_rvalue() {
+    mut int* m = &mut (1 + 2);      // error: cannot take mutable address of an rvalue
+}

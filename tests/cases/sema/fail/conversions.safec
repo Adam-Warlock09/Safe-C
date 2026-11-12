@@ -1,0 +1,41 @@
+// Implicit conversions SafeC doesn't allow, one per function.
+
+struct S {
+    int f;
+};
+
+void nullable_to_nonnull(int*? p) {
+    int* q = p;                     // error: cannot implicitly convert nullable pointer
+}
+
+void borrow_to_own(int* p) {
+    own int* q = p;                 // error: cannot implicitly convert to owning pointer
+}
+
+void borrow_to_raw(int* p) {
+    raw int* r = p;                 // error: to or from raw pointer
+}
+
+void raw_to_borrow(raw int* r) {
+    int* p = r;                     // error: to or from raw pointer
+}
+
+void shared_to_mut(int* p) {
+    mut int* m = p;                 // error: cannot implicitly convert expression of type 'int*' to 'mut int*'
+}
+
+void different_pointee(float* f) {
+    int* p = f;                     // error: incompatible pointer types
+}
+
+void struct_to_int(struct S s) {
+    int x = s;                      // error: cannot implicitly convert
+}
+
+void int_to_struct(int x) {
+    struct S s = x;                 // error: cannot implicitly convert
+}
+
+void null_to_nonnull() {
+    int* p = null;                  // error: 'null' can only be assigned to a nullable pointer type
+}

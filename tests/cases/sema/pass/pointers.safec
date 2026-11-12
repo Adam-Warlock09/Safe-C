@@ -1,0 +1,45 @@
+// Pointer kinds used the way they're allowed to be.
+
+struct Cell {
+    int v;
+};
+
+struct Box {
+    int v;
+    own struct Box*? child;
+};
+
+void set(mut struct Cell* c, int v) {
+    c->v = v;                       // write through a mut borrow
+}
+
+int get(struct Cell* c) {
+    return c->v;                    // read through a shared borrow
+}
+
+int raw_access(raw int* r) {
+    int v = 0;
+    trusted {
+        v = *r;                     // raw pointers work inside trusted
+        r[1] = v;
+        raw int* q = r + 1;         // so does pointer arithmetic
+        v = *q;
+    }
+    return v;
+}
+
+int main() {
+    own struct Cell* cell = new struct Cell;
+    set(cell, 5);                   // an own T* lends itself out as mut T*...
+    int v = get(cell);              // ...and as T*, without being moved
+    free(cell);
+
+    own struct Box* b = new struct Box;
+    own struct Box* c = new struct Box;
+    b->child = c;                   // move into an own field (new zero-filled it, so nothing leaks)
+    own struct Box*? taken = b->child;
+    b->child = null;
+    if (taken != null) free(taken);
+    free(b);
+    return v;
+}

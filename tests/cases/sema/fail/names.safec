@@ -1,0 +1,36 @@
+// Name lookup errors, one per function.
+
+struct P {
+    int x;
+};
+
+int one() {
+    return 1;
+}
+
+int undeclared() {
+    return nope;                    // error: undeclared identifier: 'nope'
+}
+
+int call_non_function() {
+    int v = 1;
+    return v();                     // error: called object is not a function
+}
+
+int function_as_value() {
+    int v = one;                    // error: cannot be used as a value
+    return v;
+}
+
+int unknown_field(struct P p) {
+    return p.z;                     // error: has no field named 'z'
+}
+
+int unknown_arrow(struct P* p) {
+    return p->z;                    // error: has no field named 'z'
+}
+
+int unknown_designator() {
+    struct P p = (struct P){ .z = 1 };   // error: has no field named 'z'
+    return p.x;
+}

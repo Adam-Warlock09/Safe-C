@@ -1,0 +1,49 @@
+// Declarations and scopes that must be accepted.
+
+int g = 1;
+
+int twice(int v) {
+    return v * 2;
+}
+
+// SafeC has no prototypes: a function can call one defined later...
+int calls_later() {
+    return defined_later(3);
+}
+
+int defined_later(int v) {
+    return v + 1;
+}
+
+// ...and two functions can call each other
+int is_even(int n) {
+    if (n == 0) return 1;
+    return is_odd(n - 1);
+}
+
+int is_odd(int n) {
+    if (n == 0) return 0;
+    return is_even(n - 1);
+}
+
+int shadowing(int p) {
+    int x = p;
+    {
+        int x = 2;          // shadows the outer x
+        int p = x;          // shadows the parameter
+        g = p;
+    }
+    for (int i = 0; i < 2; i++) {
+        int x = i;          // a new x in every loop body
+        g = x;
+    }
+    for (int i = 0; i < 2; i++) {   // a second i, in its own for scope
+        g = i;
+    }
+    int y = x + 1;          // a name is visible from its declaration on
+    return y;
+}
+
+int main(void) {
+    return twice(g) + calls_later() + is_even(4) + shadowing(1);
+}
