@@ -2241,6 +2241,7 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
+				positionalIdx = targetField->index + 1; //positional value so after this fills, the next field can be filled
 			} else {
 				if (positionalIdx >= sDecl->fields.size()) {
 					diag.error(init.loc, "too many initializers for struct '" + sDecl->name + "'");
@@ -2250,8 +2251,8 @@ namespace safec {
 				targetField = sDecl->fields[positionalIdx++].get();
 			}
 
-			if (initializedFields[init.field]) {
-				diag.error(init.loc, "duplicate initialization of field '" + init.field + "'");
+			if (initializedFields[targetField->name]) {
+				diag.error(init.loc, "duplicate initialization of field '" + targetField->name + "'");
 				expr->setInvalid();
 				return;
 			}

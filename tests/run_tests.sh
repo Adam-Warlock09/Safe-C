@@ -165,10 +165,12 @@ case_parser() {   # $1 = pass|fail, $2 = file; expected output is the AST
 # compiler reports needs a marker on its line. Notes are ignored.
 check_markers() {   # $1 = file
     awk '
-        match($0, /\/\/[ \t]*(error|warning)(:|[ \t]*$)/) {
+        match($0, /\/\/[ \t]*(error|warning)[ \t]*(:|--|$)/) {
             rest = substr($0, RSTART)
             kind = (rest ~ /^\/\/[ \t]*error/) ? "error" : "warning"
-            sub(/^\/\/[ \t]*(error|warning):?[ \t]*/, "", rest)
+            sub(/^\/\/[ \t]*(error|warning)[ \t]*/, "", rest)
+            if (rest ~ /^--/) rest = ""         # "// error -- comment": no text to match
+            sub(/^:[ \t]*/, "", rest)
             i = index(rest, " -- "); if (i) rest = substr(rest, 1, i - 1)
             sub(/[ \t]+$/, "", rest)
             print kind "\t" NR "\t" rest
