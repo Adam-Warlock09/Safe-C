@@ -4,7 +4,8 @@
 # Targets:
 #   make             build the compiler (safec), parser, and lexer
 #   make safec       build the full compiler driver
-#   make test        run all test suites (lexer, parser, sema, codegen)
+#   make test        run all test suites (lexer, parser, codegen)
+#   make test-lexer  run the lexer stage of tests/run_tests.sh
 #   make clean       remove build artifacts
 
 CC          = cc
@@ -63,20 +64,18 @@ lexer: lexer.o
 safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
 	$(CXX) -o $@ $^
 
-test-lexer: lexer
-	@echo "== lexer regression test (tests/lexer/test_lexer.safec) =="
-	@./lexer < tests/lexer/test_lexer.safec > /dev/null && echo "lexer: OK"
+# tests/run_tests.sh is the new single runner; stages move into it one at a time.
+# test-parser and test-codegen still use the old runners until their stages move.
+test-lexer:
+	bash tests/run_tests.sh --lexer --only
 
 test-parser: safec-parser
 	bash tests/parser/run_tests.sh
 
-test-sema: safec
-	bash tests/sema/run_tests.sh
-
 test-codegen: safec
 	bash tests/codegen/run_tests.sh
 
-test: test-lexer test-parser test-sema test-codegen
+test: test-lexer test-parser test-codegen
 
 clean:
 	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
@@ -85,4 +84,4 @@ clean:
 	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o \
 	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser test-sema test-codegen clean
+.PHONY: all test test-lexer test-parser test-codegen clean

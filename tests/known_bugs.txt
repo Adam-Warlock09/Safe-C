@@ -1,0 +1,19 @@
+# Tests that fail today because of a known bug.
+#
+# Format:  <stage>/<pass|fail>/<test name>   <bug number>   <short note>
+#
+# run_tests.sh reports these as KNOWN instead of FAIL. When a bug is fixed,
+# delete its lines here; a listed test that passes is reported as FIXED and
+# fails the run until its line is removed.
+
+# Bug 1: lexer errors are printed but don't make the compiler fail
+lexer/fail/invalid_01_unterminated_string        1   lexer errors don't stop compilation
+lexer/fail/invalid_02_malformed_numbers          1   lexer errors don't stop compilation
+lexer/fail/invalid_03_unterminated_comment       1   lexer errors don't stop compilation
+lexer/fail/invalid_04_unknown_characters         1   lexer errors don't stop compilation
+lexer/fail/invalid_05_bad_char_literals          1   lexer errors don't stop compilation
+lexer/fail/number_01_invalid_suffix_f            1   lexer errors don't stop compilation
+lexer/fail/number_02_repeated_float_suffix       1   lexer errors don't stop compilation
+lexer/fail/number_03_alphabetic_float_suffix     1   lexer errors don't stop compilation
+lexer/fail/number_04_incomplete_exponent_decimal 1   lexer errors don't stop compilation
+lexer/fail/number_06_multiple_decimal_points     1   lexer errors don't stop compilation
