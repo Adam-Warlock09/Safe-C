@@ -26,6 +26,14 @@ int peek(struct List* list) {
     return -1;
 }
 
+int last_value(struct Node* n) {
+    struct Node* cur = n;
+    while (cur->next != null) {     // narrows cur->next inside the loop body
+        cur = cur->next;
+    }
+    return cur->value;
+}
+
 int main() {
     return 0;
 }

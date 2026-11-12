@@ -26,6 +26,23 @@ namespace safec {
 			return expr;
 		}
 
+		// The narrowing key for p, p->f or p.f.g or nothing for any other expression
+		std::optional<NarrowKey> narrowKeyOf(const Expr* e) {
+			e = unwrapImplicit(e);
+			if (auto* ne = dyn_cast<NameExpr>(e)) {
+				auto* vd = dyn_cast<VarDecl>(ne->decl);
+				if (!vd || vd->isGlobal) return std::nullopt;   // only locals and parameters
+				return NarrowKey{ne->decl, {}};
+			}
+			if (auto* me = dyn_cast<MemberExpr>(e)) {
+				if (!me->field) return std::nullopt;
+				auto key = narrowKeyOf(me->base.get());
+				if (key) key->fields.push_back(me->field);
+				return key;
+			}
+			return std::nullopt;
+		}
+
 		// Evaluates compile-time integer constants (for array sizes and switch cases)
 		std::optional<int64_t> evalConstInt(const Expr* expr) {
 
@@ -196,14 +213,14 @@ namespace safec {
 		}
 
 		// Pre-scans an expression for assignments/increments to drop unsound loop narrowings
-		void dropAssignedInExpr(const Expr* expr, std::unordered_map<ValueDecl*, const Type*>& narrowed) {
+		void dropAssignedInExpr(const Expr* expr, std::map<NarrowKey, const Type*>& narrowed) {
 			if (!expr) return;
 			switch (expr->kind()) {
 				case NodeKind::AssignExpr: {
 					auto* ae = cast<AssignExpr>(expr);
 					if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ae->target.get()))) {
 						for (auto it = narrowed.begin(); it != narrowed.end(); ) {
-							if (it->first->name == ne->name) it = narrowed.erase(it);
+							if (it->first.root->name == ne->name) it = narrowed.erase(it);
 							else ++it;
 						}
 					}
@@ -216,7 +233,7 @@ namespace safec {
 					if (ue->isIncDec()) {
 						if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ue->operand.get()))) {
 							for (auto it = narrowed.begin(); it != narrowed.end(); ) {
-								if (it->first->name == ne->name) it = narrowed.erase(it);
+								if (it->first.root->name == ne->name) it = narrowed.erase(it);
 								else ++it;
 							}
 						}
@@ -240,7 +257,7 @@ namespace safec {
 							if (ue->op == UnaryOp::AddrOfMut) {
 								if (auto* ne = dyn_cast<NameExpr>(unwrapImplicit(ue->operand.get()))) {
 									for (auto it = narrowed.begin(); it != narrowed.end(); ) {
-										if (it->first->name == ne->name) it = narrowed.erase(it);
+										if (it->first.root->name == ne->name) it = narrowed.erase(it);
 										else ++it;
 									}
 								}
@@ -273,7 +290,7 @@ namespace safec {
 			}
 		}
 
-		void dropAssignedInStmt(const Stmt* stmt, std::unordered_map<ValueDecl*, const Type*>& narrowed) {
+		void dropAssignedInStmt(const Stmt* stmt, std::map<NarrowKey, const Type*>& narrowed) {
 			if (!stmt) return;
 			switch (stmt->kind()) {
 				case NodeKind::CompoundStmt:
@@ -1003,6 +1020,7 @@ namespace safec {
 				// Drop outer narrowings for any variable modified inside the loop before checking cond/body
 				dropAssignedInExpr(ws->cond.get(), narrowedVars);
 				dropAssignedInStmt(ws->body.get(), narrowedVars);
+				forgetFieldNarrowing();
 				auto savedNarrowing = narrowedVars;
 
 				checkCondition(ws->cond, ws->cond->loc, prog);
@@ -1068,6 +1086,7 @@ namespace safec {
 				if (fs->cond) dropAssignedInExpr(fs->cond.get(), narrowedVars);
 				if (fs->step) dropAssignedInExpr(fs->step.get(), narrowedVars);
 				dropAssignedInStmt(fs->body.get(), narrowedVars);
+				forgetFieldNarrowing();
 				auto savedNarrowing = narrowedVars;
 
 				if (fs->cond) {
@@ -1433,6 +1452,7 @@ namespace safec {
 				if (ce->isInvalid()) break;
 
 				checkCall(ce, cast<FunctionType>(ce->callee->type));
+				forgetFieldNarrowing();
 				break;
 
 			}
@@ -1891,6 +1911,8 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
+
+				forgetFieldNarrowing();
 				expr->type = types.pointerTo(opType, PtrKind::MutBorrow, false);
 				expr->category = ValueCategory::RValue;
 				break;
@@ -1959,7 +1981,7 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
-				
+
 				if (!isTrusted && writesThroughReadBorrow(expr->operand.get())) {
 					diag.error(expr->loc, "cannot modify through a read borrow; it must be a 'mut' or 'own' pointer");
 					expr->setInvalid();
@@ -2023,6 +2045,12 @@ namespace safec {
 		}
 
 		expr->type = field->type;
+
+		if (auto key = narrowKeyOf(expr)) {   // a field checked against null earlier
+			auto it = narrowedVars.find(*key);
+			if (it != narrowedVars.end()) expr->type = it->second;
+		}
+
 		expr->category = expr->isArrow ? ValueCategory::LValue : (expr->base->isLValue() ? ValueCategory::LValue : ValueCategory::RValue);
 
 		if (expr->isArrow) {
@@ -2327,12 +2355,31 @@ namespace safec {
 	// Flow-Sensitive Null Narrowing
 	// ===================================================================
 
+	// Called when target is written
 	void Sema::clearNarrowing(Expr* target) {
-		if (auto* nameExpr = dyn_cast<NameExpr>(unwrapImplicit(target))) {
+		Expr* t = unwrapImplicit(target);
+		if (auto* nameExpr = dyn_cast<NameExpr>(t)) {
 			if (nameExpr->decl) {
-				narrowedVars.erase(nameExpr->decl);
+				// the variable and every field reached from it
+				for (auto it = narrowedVars.begin(); it != narrowedVars.end(); ) {
+					if (it->first.root == nameExpr->decl) it = narrowedVars.erase(it);
+					else ++it;
+				}
 				nameExpr->type = nameExpr->decl->type;
 			}
+			return;
+		}
+		// A field, *p or a[i]: it could be the same memory as any narrowed field
+		forgetFieldNarrowing();
+		if (auto* me = dyn_cast<MemberExpr>(t)) {
+			if (me->field) me->type = me->field->type;
+		}
+	}
+
+	void Sema::forgetFieldNarrowing() {
+		for (auto it = narrowedVars.begin(); it != narrowedVars.end(); ) {
+			if (!it->first.fields.empty()) it = narrowedVars.erase(it);
+			else ++it;
 		}
 	}
 
@@ -2340,7 +2387,7 @@ namespace safec {
 
 		if (!decl) return originalType;
 
-		auto it = narrowedVars.find(decl);
+		auto it = narrowedVars.find(NarrowKey{decl,{}});
 		if (it != narrowedVars.end()) {
 			return it->second;
 		}
@@ -2368,29 +2415,22 @@ namespace safec {
 		Expr *lhsSub = unwrapImplicit(bin->lhs.get());
 		Expr *rhsSub = unwrapImplicit(bin->rhs.get());
 
-		NameExpr *nameExpr = dyn_cast<NameExpr>(lhsSub);
-		bool isNullLit = isa<NullLiteral>(rhsSub);
+		
+		// The side that isn't `null`: a variable, or a field path like list->head
+		Expr* other = isa<NullLiteral>(rhsSub) ? lhsSub : (isa<NullLiteral>(lhsSub) ? rhsSub : nullptr);
+		if (!other) return;
 
-		if (!nameExpr || !isNullLit) {
-			nameExpr = dyn_cast<NameExpr>(rhsSub);
-			isNullLit = isa<NullLiteral>(lhsSub);
-		}
+		auto key = narrowKeyOf(other);
+		if (!key) return;
 
-		if (nameExpr && isNullLit && nameExpr->decl) {
+		// The declared type, not a narrowed one
+		const Type* curType = key->fields.empty() ? key->root->type : key->fields.back()->type;
 
-			if (auto* vd = dyn_cast<VarDecl>(nameExpr->decl)) {
-				if (vd->isGlobal) return; // only narrow locals and parameters
+		if (auto* ptrT = dyn_cast<PointerType>(curType)) {
+			if (ptrT->isNullable()) {
+				const Type* narrowed = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
+				narrowedVars[*key] = narrowed;
 			}
-
-			const Type* curType = nameExpr->decl->type;
-
-			if (auto* ptrT = dyn_cast<PointerType>(curType)) {
-				if (ptrT->isNullable()) {
-					const Type* narrowed = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
-					narrowedVars[nameExpr->decl] = narrowed;
-				}
-			}
-			
 		}
 
 	}

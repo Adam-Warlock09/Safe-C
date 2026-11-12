@@ -23,3 +23,6 @@ driver
 
 # LLVM IR the safec driver writes next to each compiled file
 *.safec.ll
+# the compiler and object files the Makefile builds
+/safec
+*.o

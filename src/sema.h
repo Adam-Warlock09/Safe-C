@@ -2,11 +2,24 @@
 #define SAFEC_SEMA_H
 
 #include "new_ast.h"
+#include <map>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
 namespace safec {
+
+    // What a null check narrows: a local or parameter, optionally followed by
+    // fields, so p, list->head and n.next can all be narrowed.
+    struct NarrowKey {
+        ValueDecl* root = nullptr;
+        std::vector<const FieldDecl*> fields;   // empty for the variable itself
+
+        bool operator<(const NarrowKey& o) const {
+            return std::tie(root, fields) < std::tie(o.root, o.fields);
+        }
+    };
 
     class Scope {
         
@@ -92,8 +105,9 @@ namespace safec {
             void applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types);
             void clearNarrowing(Expr* target);
             const Type* getNarrowedType(ValueDecl* decl, const Type* originalType);
+            void forgetFieldNarrowing();
 
-            std::unordered_map<ValueDecl*, const Type*> narrowedVars;
+            std::map<NarrowKey, const Type*> narrowedVars;
 
             // Allow the local test function to access these private hooks
             friend void test_phase1_conversions();

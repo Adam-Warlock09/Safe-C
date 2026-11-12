@@ -1,0 +1,49 @@
+// A null check on a field stops counting once the field could have changed.
+// Each function checks b->child, changes something, then uses it again.
+
+struct Box {
+    int v;
+    own struct Box*? child;
+};
+
+void reset(mut struct Box* b) {
+}
+
+int after_a_call(mut struct Box* b) {
+    if (b->child != null) {
+        reset(b);                   // could set b->child to null
+        return b->child->v;         // error: cannot use '->' on nullable pointer
+    }
+    return 0;
+}
+
+int after_writing_the_field(mut struct Box* b) {
+    if (b->child != null) {
+        b->child = null;
+        return b->child->v;         // error: cannot use '->' on nullable pointer
+    }
+    return 0;
+}
+
+int after_reassigning_the_variable(struct Box* b, struct Box* other) {
+    if (b->child != null) {
+        b = other;                  // a different box, its child wasn't checked
+        return b->child->v;         // error: cannot use '->' on nullable pointer
+    }
+    return 0;
+}
+
+int after_a_mut_borrow(mut struct Box* b) {
+    if (b->child != null) {
+        mut struct Box* m = &mut *b;    // could set b->child to null through m
+        return b->child->v;         // error: cannot use '->' on nullable pointer
+    }
+    return 0;
+}
+
+int other_field_not_checked(struct Box* a, struct Box* b) {
+    if (a->child != null) {
+        return b->child->v;         // error: cannot use '->' on nullable pointer -- only a->child was checked
+    }
+    return 0;
+}
