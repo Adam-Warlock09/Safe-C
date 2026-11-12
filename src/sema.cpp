@@ -43,6 +43,47 @@ namespace safec {
 			return std::nullopt;
 		}
 
+		// The key for a variable or a field of it reached with `.` (`s`, `s.f.g`):
+		// the places definite assignment tracks. Nothing for anything else.
+		std::optional<NarrowKey> initKeyOf(const Expr* e) {
+			e = unwrapImplicit(e);
+			if (auto* ne = dyn_cast<NameExpr>(e)) {
+				auto* vd = dyn_cast<VarDecl>(ne->decl);
+				if (!vd || vd->isGlobal) return std::nullopt;
+				return NarrowKey{ne->decl, {}};
+			}
+			if (auto* me = dyn_cast<MemberExpr>(e)) {
+				if (me->isArrow || !me->field) return std::nullopt;
+				auto key = initKeyOf(me->base.get());
+				if (key) key->fields.push_back(me->field);
+				return key;
+			}
+			return std::nullopt;
+		}
+
+		// "s.f.g" for messages
+		std::string keyName(const NarrowKey& k) {
+			std::string s = k.root->name;
+			for (const FieldDecl* f : k.fields) s += "." + f->name;
+			return s;
+		}
+
+		// True if one key is the other, or one is a field of the other
+		bool keysOverlap(const NarrowKey& a, const NarrowKey& b) {
+			if (a.root != b.root) return false;
+			size_t n = std::min(a.fields.size(), b.fields.size());
+			return std::equal(a.fields.begin(), a.fields.begin() + n, b.fields.begin());
+		}
+
+		// Joining two paths: a place is unassigned if it is on either one
+		InitState mergeInit(const InitState& a, const InitState& b) {
+			if (!a.reachable) return b;
+			if (!b.reachable) return a;
+			InitState out = a;
+			out.unassigned.insert(b.unassigned.begin(), b.unassigned.end());
+			return out;
+		}
+
 		// Evaluates compile-time integer constants (for array sizes and switch cases)
 		std::optional<int64_t> evalConstInt(const Expr* expr) {
 
@@ -862,6 +903,9 @@ namespace safec {
 
 				currFun = fd;
 				narrowedVars.clear();
+				init = InitState{};          // parameters start out assigned
+				breakInits.clear();
+				continueInits.clear();
 				scope.push(); // Open function-level scope
 
 				// Declare parameters in the function scope
@@ -952,6 +996,10 @@ namespace safec {
 						}
 					}
 
+					// Definite assignment: a variable without an initializer starts out unassigned
+					if (vd->init) flowExpr(vd->init.get());
+					else if (vd->type && !vd->isInvalid()) addUnassigned(NarrowKey{vd.get(), {}}, vd->type);
+
 					// Declare *after* checking init so `int x = x;` fails properly
 					if (!scope.declare(vd.get())) {
 						VarDecl* prev = scope.lookupCurrentFrame(vd->name);
@@ -969,6 +1017,7 @@ namespace safec {
 			case NodeKind::ExprStmt: {
 				
 				checkExpr(cast<ExprStmt>(stmt)->expr.get(), prog);
+				flowExpr(cast<ExprStmt>(stmt)->expr.get());
 				break;
 
 			}
@@ -977,12 +1026,16 @@ namespace safec {
 
 				auto* is = cast<IfStmt>(stmt);
 				checkCondition(is->cond, is->cond->loc, prog);
+				flowExpr(is->cond.get());
+				InitState initBefore = init;
 
 				auto savedNarrowing = narrowedVars;
 
 				applyNarrowing(is->cond.get(), /*isTrueBranch=*/true, prog.types);
 				checkStmt(is->thenStmt.get(), prog);
 				auto afterThen = narrowedVars;
+				InitState initThen = init;
+				init = initBefore;
 
 				narrowedVars = savedNarrowing;
 				applyNarrowing(is->cond.get(), /*isTrueBranch=*/false, prog.types);
@@ -990,6 +1043,7 @@ namespace safec {
 					checkStmt(is->elseStmt.get(), prog);
 				}
 				auto afterElse = narrowedVars;
+				init = mergeInit(initThen, init);
 
 				// A branch that always exits doesn't reach the code after the if
 				bool thenExits = alwaysExits(is->thenStmt.get());
@@ -1024,17 +1078,30 @@ namespace safec {
 				auto savedNarrowing = narrowedVars;
 
 				checkCondition(ws->cond, ws->cond->loc, prog);
+				flowExpr(ws->cond.get());
+				InitState initAtCond = init;
 
 				// The body only runs right after the condition held; assignments inside it clear the narrowing in order
 				applyNarrowing(ws->cond.get(), /*isTrueBranch=*/true, prog.types);
 
 				breakStack.push_back(ws);
 				continueStack.push_back(ws);
+				breakInits.emplace_back();
+				continueInits.emplace_back();
 
 				checkStmt(ws->body.get(), prog);
 
 				breakStack.pop_back();
 				continueStack.pop_back();
+				{
+					auto c = evalConstInt(ws->cond.get());
+					InitState after = initAtCond;
+					if (c && *c != 0) after.reachable = false;   // while (1) only ends with a break
+					for (const InitState& b : breakInits.back()) after = mergeInit(after, b);
+					init = after;
+				}
+				breakInits.pop_back();
+				continueInits.pop_back();
 
 				narrowedVars = std::move(savedNarrowing);
 
@@ -1071,6 +1138,9 @@ namespace safec {
 					rs->setInvalid();
 				}
 
+				flowExpr(rs->value.get());
+				init.reachable = false; 
+
 				break;
 
 			}
@@ -1092,21 +1162,42 @@ namespace safec {
 				if (fs->cond) {
 					checkCondition(fs->cond, fs->cond->loc, prog);
 					applyNarrowing(fs->cond.get(), /*isTrueBranch=*/true, prog.types);
+					flowExpr(fs->cond.get());
 				}
 				auto condNarrowing = narrowedVars;
+				InitState initAtCond = init;
 
 				breakStack.push_back(fs);
 				continueStack.push_back(fs);
+				breakInits.emplace_back();
+				continueInits.emplace_back();
 
 				checkStmt(fs->body.get(), prog);
 
 				breakStack.pop_back();
 				continueStack.pop_back();
 
+				for (const InitState& c : continueInits.back()) init = mergeInit(init, c);   // the step runs after the body or a continue
+				std::vector<InitState> forBreaks = std::move(breakInits.back());
+				breakInits.pop_back();
+				continueInits.pop_back();
+
 				// The step runs after the body or a `continue`: keep only the condition narrowings the body cannot change
 				narrowedVars = std::move(condNarrowing);
 				dropAssignedInStmt(fs->body.get(), narrowedVars);
 				if (fs->step) checkExpr(fs->step.get(), prog);
+
+				flowExpr(fs->step.get());
+
+				// After the loop: the condition was false, or a break. for (;;) only ends with a break.
+				{
+					auto c = fs->cond ? evalConstInt(fs->cond.get()) : std::optional<int64_t>(1);
+					InitState after = initAtCond;
+					if (c && *c != 0) after.reachable = false;
+					for (const InitState& b : forBreaks) after = mergeInit(after, b);
+					init = after;
+				}
+
 
 				narrowedVars = std::move(savedNarrowing);
 				scope.pop(); // Pop the for-loop scope
@@ -1129,6 +1220,13 @@ namespace safec {
 
 				scope.push(); // Switch statements have their own scope for case variables
 				breakStack.push_back(sw);
+
+				breakInits.emplace_back();
+
+				flowExpr(sw->cond.get());
+				InitState initAtSwitch = init;
+				InitState initFall;             
+				initFall.reachable = false;
 
 				std::unordered_map<int64_t, SourceLoc> seenCases; // Track case values to detect duplicates
 				bool hasDefault = false;
@@ -1166,6 +1264,8 @@ namespace safec {
 						}
 					}
 
+					init = mergeInit(initAtSwitch, initFall); 
+
 					for (auto& s : sc->body) {
 						// Case bodies share the switch's scope, so a defer here would also run on paths that never reached it
 						if (isa<DeferStmt>(s.get())) {
@@ -1174,11 +1274,16 @@ namespace safec {
 							continue;
 						}
 						checkStmt(s.get(), prog);
+						initFall = init;
 					}
 
 				}
 
 				breakStack.pop_back();
+				init = initFall;
+				for (const InitState& b : breakInits.back()) init = mergeInit(init, b);
+				if (!hasDefault) init = mergeInit(init, initAtSwitch);
+				breakInits.pop_back();
 				scope.pop(); // Pop the switch statement scope
 				break;
 
@@ -1195,7 +1300,9 @@ namespace safec {
 					bs->setInvalid();
 				} else {
 					bs->target = breakStack.back();
+					breakInits.back().push_back(init);
 				}
+				init.reachable = false;
 
 				break;
 
@@ -1212,7 +1319,9 @@ namespace safec {
 					cs->setInvalid();
 				} else {
 					cs->target = continueStack.back();
+					continueInits.back().push_back(init);
 				}
+				init.reachable = false;
 
 				break;
 
@@ -1235,9 +1344,11 @@ namespace safec {
 				breakStack.clear();
 				continueStack.clear();
 				
+				InitState initBeforeDefer = init;
 				inDefer++;
 				checkStmt(ds->body.get(), prog);
 				inDefer--;
+				init = initBeforeDefer;
 
 				// Restore outer jump targets
 				breakStack = std::move(oldBreak);
@@ -2438,6 +2549,145 @@ namespace safec {
 	// ===================================================================
 	// Hooks (Pointer Rules & Flow Ownership)
 	// ===================================================================
+
+		// ===================================================================
+	// Definite assignment: reading a variable before it's assigned
+	// ===================================================================
+
+	// Walks an already-checked expression in evaluation order: reads must find
+	// their place assigned, and assignments mark places as assigned
+	void Sema::flowExpr(Expr* e) {
+
+		if (!e || e->isInvalid() || !init.reachable) return;
+
+		switch (e->kind()) {
+
+			case NodeKind::NameExpr:
+			case NodeKind::MemberExpr:
+				if (auto key = initKeyOf(e)) {
+					flowRead(*key, e->loc);
+				} else if (auto* me = dyn_cast<MemberExpr>(e)) {
+					flowExpr(me->base.get());   // p->f reads p
+				}
+				break;
+
+			case NodeKind::UnaryExpr: {
+				auto* u = cast<UnaryExpr>(e);
+				flowExpr(u->operand.get());     // *p, &x, &mut x, ++x and -x all read their operand
+				if (u->isIncDec()) {
+					if (auto key = initKeyOf(u->operand.get())) flowWrite(*key);
+				}
+				break;
+			}
+
+			case NodeKind::AssignExpr: {
+				auto* a = cast<AssignExpr>(e);
+				flowExpr(a->value.get());       // the right side runs first
+				if (auto key = initKeyOf(a->target.get())) {
+					if (a->isCompound()) flowRead(*key, a->target->loc);   // x += 1 reads x
+					flowWrite(*key);
+				} else {
+					flowPlace(a->target.get());
+				}
+				break;
+			}
+
+			case NodeKind::BinaryExpr: {
+				auto* b = cast<BinaryExpr>(e);
+				flowExpr(b->lhs.get());
+				if (b->isLogical()) {
+					// the right side only runs sometimes, so its assignments don't count
+					InitState saved = init;
+					flowExpr(b->rhs.get());
+					init = mergeInit(saved, init);
+				} else {
+					flowExpr(b->rhs.get());
+				}
+				break;
+			}
+
+			case NodeKind::CallExpr: {
+				auto* c = cast<CallExpr>(e);
+				flowExpr(c->callee.get());
+				for (auto& arg : c->args) flowExpr(arg.get());
+				break;
+			}
+
+			case NodeKind::IndexExpr: {
+				auto* ix = cast<IndexExpr>(e);
+				flowExpr(ix->base.get());
+				flowExpr(ix->index.get());
+				break;
+			}
+
+			case NodeKind::FreeExpr:
+				flowExpr(cast<FreeExpr>(e)->operand.get());
+				break;
+
+			case NodeKind::CompoundLiteralExpr:
+				for (auto& i : cast<CompoundLiteralExpr>(e)->inits) flowExpr(i.value.get());
+				break;
+
+			case NodeKind::ImplicitCastExpr:
+				flowExpr(cast<ImplicitCastExpr>(e)->sub.get());
+				break;
+
+			default:   // literals and `new`
+				break;
+
+		}
+
+	}
+
+	
+	void Sema::flowPlace(Expr* target) {
+		Expr* t = unwrapImplicit(target);
+		if (auto* u = dyn_cast<UnaryExpr>(t)) {
+			flowExpr(u->operand.get());
+		} else if (auto* me = dyn_cast<MemberExpr>(t)) {
+			if (me->isArrow) flowExpr(me->base.get());
+			else flowPlace(me->base.get());
+		} else if (auto* ix = dyn_cast<IndexExpr>(t)) {
+			if (ix->base->type && isa<PointerType>(ix->base->type)) flowExpr(ix->base.get());
+			else flowPlace(ix->base.get());   // writing an array element doesn't read the array
+			flowExpr(ix->index.get());
+		}
+	}
+
+	void Sema::flowRead(const NarrowKey& key, SourceLoc loc) {
+		for (const NarrowKey& u : init.unassigned) {
+			if (!keysOverlap(key, u)) continue;
+			if (!isTrusted) {   // like the borrow checker: no errors inside trusted
+				diag.error(loc, "'" + keyName(u) + "' may be used before it is assigned");
+			}
+			flowWrite(key);     // report each place once
+			return;
+		}
+	}
+
+	void Sema::flowWrite(const NarrowKey& key) {
+		for (auto it = init.unassigned.begin(); it != init.unassigned.end(); ) {
+			if (keysOverlap(key, *it) && key.fields.size() <= it->fields.size()) it = init.unassigned.erase(it);
+			else ++it;
+		}
+	}
+
+	
+	void Sema::addUnassigned(const NarrowKey& key, const Type* t) {
+		if (!t) return;
+		if (auto* st = dyn_cast<StructType>(t)) {
+			for (auto& f : st->decl()->fields) {
+				if (f->isInvalid() || !f->type) continue;
+				NarrowKey sub = key;
+				sub.fields.push_back(f.get());
+				addUnassigned(sub, f->type);
+			}
+			return;
+		}
+		if (isa<ArrayType>(t)) return;
+		if (auto* pt = dyn_cast<PointerType>(t); pt && pt->ptrKind() == PtrKind::Own) return;
+		init.unassigned.insert(key);
+	}
 
 	bool Sema::checkDeref(Expr* base, SourceLoc loc) {
 		auto* ptrT = dyn_cast<PointerType>(base->type);

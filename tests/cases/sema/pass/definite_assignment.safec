@@ -1,0 +1,124 @@
+// Variables assigned before every read, through every kind of control flow.
+
+struct P {
+    int x;
+    int y;
+};
+
+void set(mut int* out) {
+    *out = 1;
+}
+
+int both_branches(int c) {
+    int r;
+    if (c) r = 1;
+    else r = 2;
+    return r;
+}
+
+int early_return(int c) {
+    int r;
+    if (c) return 0;            // this path never reads r
+    else r = 5;
+    return r;
+}
+
+int loop_with_break() {
+    int r;
+    while (1) {                 // only leaves through the break
+        r = 3;
+        break;
+    }
+    return r;
+}
+
+int for_ever() {
+    int r;
+    for (;;) {
+        r = 4;
+        break;
+    }
+    return r;
+}
+
+int switch_all_cases(int c) {
+    int r;
+    switch (c) {
+        case 0: r = 1; break;
+        case 1: r = 2; break;
+        default: r = 3; break;
+    }
+    return r;
+}
+
+int switch_fallthrough(int c) {
+    int r;
+    switch (c) {
+        case 0:
+        case 1: r = 1; break;
+        default: r = 0;
+    }
+    return r;
+}
+
+int fields_one_by_one() {
+    struct P p;
+    p.x = 1;
+    p.y = 2;
+    struct P q = p;             // every field is assigned
+    return q.x + q.y;
+}
+
+int one_field_is_enough() {
+    struct P p;
+    p.x = 1;
+    return p.x;                 // p.y is never read
+}
+
+int whole_struct() {
+    struct P p;
+    p = (struct P){ 1, 2 };
+    return p.y;
+}
+
+int assigned_in_condition(int c) {
+    int r;
+    if ((r = c) > 0) return r;
+    return r;
+}
+
+int arrays_are_not_tracked() {
+    int a[3];
+    a[0] = 1;
+    return a[0];
+}
+
+int pointers(int c) {
+    int* p;
+    int v = c;
+    p = &v;
+    int*? q;
+    q = null;
+    if (q == null) return *p;
+    return 0;
+}
+
+int out_parameter() {
+    int x = 0;                  // &mut needs x assigned first
+    set(&mut x);
+    return x;
+}
+
+int compound_after_init() {
+    int x = 1;
+    x += 2;
+    x++;
+    return x;
+}
+
+int main() {
+    return both_branches(1) + early_return(0) + loop_with_break() + for_ever()
+        + switch_all_cases(1) + switch_fallthrough(0) + fields_one_by_one()
+        + one_field_is_enough() + whole_struct() + assigned_in_condition(1)
+        + arrays_are_not_tracked() + pointers(1) + out_parameter() + compound_after_init();
+}

@@ -1,0 +1,113 @@
+// Reads that can happen before the variable is assigned, one per function.
+
+struct P {
+    int x;
+    int y;
+};
+
+void set(mut int* out) {
+    *out = 1;
+}
+
+int read(int* p) {
+    return *p;
+}
+
+int only_in_loop_body(int n) {
+    int r;
+    while (n > 0) {
+        r = n;
+        n--;
+    }
+    return r;                   // error: 'r' may be used -- the loop may run zero times
+}
+
+int only_in_for_body(int n) {
+    int r;
+    for (int i = 0; i < n; i++) r = i;
+    return r;                   // error: 'r' may be used
+}
+
+int missing_from_one_case(int c) {
+    int r;
+    switch (c) {
+        case 0: r = 1; break;
+        case 1: break;
+        default: r = 3;
+    }
+    return r;                   // error: 'r' may be used
+}
+
+int switch_without_default(int c) {
+    int r;
+    switch (c) {
+        case 0: r = 1; break;
+    }
+    return r;                   // error: 'r' may be used -- no case may match
+}
+
+int break_skips_the_assignment(int c) {
+    int r;
+    while (1) {
+        if (c) break;
+        r = 1;
+        break;
+    }
+    return r;                   // error: 'r' may be used
+}
+
+int right_side_of_and(int c) {
+    int r;
+    if (c && (r = 1) > 0) {
+    }
+    return r;                   // error: 'r' may be used -- the right side may not run
+}
+
+int compound_assignment() {
+    int x;
+    x += 1;                     // error: 'x' may be used -- += reads x
+    return x;
+}
+
+int increment() {
+    int x;
+    x++;                        // error: 'x' may be used
+    return x;
+}
+
+int shared_borrow() {
+    int x;
+    return read(&x);            // error: 'x' may be used
+}
+
+int mut_borrow() {
+    int x;
+    set(&mut x);                // error: 'x' may be used -- strict, like the borrow checker
+    return x;
+}
+
+int missing_field() {
+    struct P p;
+    p.x = 1;
+    struct P q = p;             // error: 'p.y' may be used -- copying p reads every field
+    return q.x;
+}
+
+int uninitialized_pointer() {
+    int* p;
+    return *p;                  // error: 'p' may be used
+}
+
+int deferred_assignment() {
+    int r;
+    defer r = 1;                // runs at the end of the block, after the read
+    return r;                   // error: 'r' may be used
+}
+
+int inside_trusted_is_fine() {
+    int r;
+    trusted {
+        r = r + 1;              // no error: trusted turns this off, as in the borrow checker
+    }
+    return r;
+}

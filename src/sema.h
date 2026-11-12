@@ -3,6 +3,7 @@
 
 #include "new_ast.h"
 #include <map>
+#include <set>
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
@@ -19,6 +20,11 @@ namespace safec {
         bool operator<(const NarrowKey& o) const {
             return std::tie(root, fields) < std::tie(o.root, o.fields);
         }
+    };
+
+    struct InitState {
+        std::set<NarrowKey> unassigned;
+        bool reachable = true;
     };
 
     class Scope {
@@ -108,6 +114,17 @@ namespace safec {
             void forgetFieldNarrowing();
 
             std::map<NarrowKey, const Type*> narrowedVars;
+
+
+            //reading a variable before it's assigned
+            InitState init;
+            std::vector<std::vector<InitState>> breakInits;      // one list per loop/switch like breakStack
+            std::vector<std::vector<InitState>> continueInits;   // one list per loop like continueStack
+            void flowExpr(Expr* e);
+            void flowPlace(Expr* target);
+            void flowRead(const NarrowKey& key, SourceLoc loc);
+            void flowWrite(const NarrowKey& key);
+            void addUnassigned(const NarrowKey& key, const Type* t);
 
             // Allow the local test function to access these private hooks
             friend void test_phase1_conversions();
