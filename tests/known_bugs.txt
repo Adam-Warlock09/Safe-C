@@ -22,7 +22,7 @@ lexer/fail/number_06_multiple_decimal_points     1   lexer errors don't stop com
 sema/pass/bug07_narrow_recheck                   7   a second null check on a narrowed pointer is rejected
 sema/pass/bug08_field_narrowing                  8   null checks on fields (list->head) don't narrow
 sema/fail/bug09_write_through_read_borrow        9   writes through a read borrow (T*) are accepted
-sema/fail/bug10_raw_deref_outside_trusted        10  raw * and -> are accepted outside trusted
+# sema/fail/bug10_raw_deref_outside_trusted        10  raw * and -> are accepted outside trusted
 sema/fail/bug11_uninitialized_read               11  reading an unassigned variable is accepted
 sema/fail/bug28_param_redeclared                 28  a local can redeclare a parameter in the body's top level
 sema/fail/bug29_positional_after_designator      29  positional initializers after a designator restart at the first field

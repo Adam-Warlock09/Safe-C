@@ -1868,7 +1868,10 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
-				checkDeref(expr->operand.get(), expr->loc);
+				if(!checkDeref(expr->operand.get(), expr->loc)){
+					expr->setInvalid();
+					return;
+				}
 				expr->type = ptrT->pointee();
 				expr->category = ValueCategory::LValue;
 				break;
@@ -2342,8 +2345,23 @@ namespace safec {
 	// Hooks (Pointer Rules & Flow Ownership)
 	// ===================================================================
 
-	void Sema::checkDeref(Expr* /*base*/, SourceLoc /*loc*/) {}
-	void Sema::checkArrow(MemberExpr* /*e*/) {}
+	bool Sema::checkDeref(Expr* base, SourceLoc loc) {
+		auto* ptrT = dyn_cast<PointerType>(base->type);
+		if (ptrT && ptrT->ptrKind() == PtrKind::Raw && !isTrusted) {
+			diag.error(loc, "dereferencing a raw pointer is only allowed inside 'trusted' blocks");
+			return false;
+		}
+		return true;
+	}
+
+	void Sema::checkArrow(MemberExpr* e) {
+		auto* ptrT = dyn_cast<PointerType>(e->base->type);
+		if (ptrT && ptrT->ptrKind() == PtrKind::Raw && !isTrusted) {
+			diag.error(e->loc, "'->' on a raw pointer is only allowed inside 'trusted' blocks");
+			e->setInvalid();
+		}
+	}
+	
 	void Sema::checkFree(FreeExpr* /*e*/) {}
 	void Sema::handleMove(Expr* /*target*/, Expr* /*value*/, SourceLoc /*loc*/) {}
 

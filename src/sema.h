@@ -99,7 +99,7 @@ namespace safec {
             friend void test_phase1_conversions();
 
             // Hooks for C
-            void checkDeref(Expr* base, SourceLoc loc);
+            bool checkDeref(Expr* base, SourceLoc loc);
             void checkArrow(MemberExpr* e);
             void checkFree(FreeExpr* e);
             void handleMove(Expr* target, Expr* value, SourceLoc loc);
