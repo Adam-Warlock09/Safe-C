@@ -2030,10 +2030,12 @@ namespace safec {
 				expr->category = ValueCategory::RValue;
 				return;
 			}
-
-			// Case C: Nullable pointer against `null`
+		
+			// Case C: Pointer against `null`. `null` becomes the nullable form of the
+			// pointer's type, so this also works on a pointer that was already narrowed
 			if (lPtr && rB && rB->builtinKind() == BuiltinKind::Null) {
-				if (!coerce(expr->rhs, lType)) {
+				const Type* nullableL = types.pointerTo(lPtr->pointee(), lPtr->ptrKind(), /*nullable=*/true);
+				if (!coerce(expr->rhs, nullableL)) {
 					expr->setInvalid();
 					return;
 				}
@@ -2042,7 +2044,8 @@ namespace safec {
 				return;
 			}
 			if (rPtr && lB && lB->builtinKind() == BuiltinKind::Null) {
-				if (!coerce(expr->lhs, rType)) {
+				const Type* nullableR = types.pointerTo(rPtr->pointee(),rPtr->ptrKind(), /*nullable=*/true);
+				if (!coerce(expr->lhs, nullableR)) {
 					expr->setInvalid();
 					return;
 				}
@@ -2361,7 +2364,7 @@ namespace safec {
 			e->setInvalid();
 		}
 	}
-	
+
 	void Sema::checkFree(FreeExpr* /*e*/) {}
 	void Sema::handleMove(Expr* /*target*/, Expr* /*value*/, SourceLoc /*loc*/) {}
 

@@ -19,7 +19,7 @@ lexer/fail/number_04_incomplete_exponent_decimal 1   lexer errors don't stop com
 lexer/fail/number_06_multiple_decimal_points     1   lexer errors don't stop compilation
 
 # Sema
-sema/pass/bug07_narrow_recheck                   7   a second null check on a narrowed pointer is rejected
+# sema/pass/bug07_narrow_recheck                   7   a second null check on a narrowed pointer is rejected
 sema/pass/bug08_field_narrowing                  8   null checks on fields (list->head) don't narrow
 sema/fail/bug09_write_through_read_borrow        9   writes through a read borrow (T*) are accepted
 # sema/fail/bug10_raw_deref_outside_trusted        10  raw * and -> are accepted outside trusted
