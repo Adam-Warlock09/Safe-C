@@ -330,6 +330,32 @@ namespace safec {
 			}
 		}
 
+		bool derefsReadBorrow(const Expr* ptr);
+
+		// True if writing to the place e would write through a read borrow (T*),
+		bool writesThroughReadBorrow(const Expr* e) {
+			e = unwrapImplicit(e);
+			if (auto* u = dyn_cast<UnaryExpr>(e)) {
+				return u->op == UnaryOp::Deref && derefsReadBorrow(u->operand.get());
+			}
+			if (auto* m = dyn_cast<MemberExpr>(e)) {
+				return m->isArrow ? derefsReadBorrow(m->base.get()) : writesThroughReadBorrow(m->base.get());
+			}
+			if (auto* ix = dyn_cast<IndexExpr>(e)) {
+				return isa<PointerType>(ix->base->type) ? derefsReadBorrow(ix->base.get()) : writesThroughReadBorrow(ix->base.get());
+			}
+			return false;   // a variable, or an rvalue
+		}
+
+		// ptr is about to be dereferenced		
+		bool derefsReadBorrow(const Expr* ptr) {
+			auto* pt = ptr->type ? dyn_cast<PointerType>(ptr->type) : nullptr;
+			if (!pt) return false;
+			if (pt->ptrKind() == PtrKind::Borrow) return true;
+			if (pt->ptrKind() == PtrKind::Raw) return false;   // raw pointers aren't checked
+			return writesThroughReadBorrow(ptr);
+		}
+
 		// True if a statement never completes normally (always ends in return / break / continue)
 		bool alwaysExits(const Stmt* stmt) {
 			if (!stmt) return false;
@@ -1665,6 +1691,14 @@ namespace safec {
 			return;
 		}
 
+
+		// Only own and mut pointers may be written through (outside trusted)
+		if (!isTrusted && writesThroughReadBorrow(expr->target.get())) {
+			diag.error(expr->loc, "cannot assign through a read borrow; it must be a 'mut' or 'own' pointer");
+			expr->setInvalid();
+			return;
+		}
+
 		// Compound assignment operators (+=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=)
 		if (expr->isCompound()) {
 			const Type* lType = expr->target->type;
@@ -1844,6 +1878,12 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
+
+				if (!isTrusted && writesThroughReadBorrow(expr->operand.get())) {
+					diag.error(expr->loc, "cannot take a mutable borrow through a read borrow");
+					expr->setInvalid();
+					return;
+				}
 				// TODO: support `mut` borrows of `mut` borrows. A type has one qualifier, on its outermost '*', so the
 				// result has no type a declaration can name; reject it until there is a qualifier per pointer level
 				if (auto* opPtr = dyn_cast<PointerType>(opType); opPtr && opPtr->ptrKind() == PtrKind::MutBorrow) {
@@ -1916,6 +1956,12 @@ namespace safec {
 			case UnaryOp::PostDec: {
 				if (!expr->operand->isLValue()) {
 					diag.error(expr->loc, "increment/decrement operand must be an lvalue");
+					expr->setInvalid();
+					return;
+				}
+				
+				if (!isTrusted && writesThroughReadBorrow(expr->operand.get())) {
+					diag.error(expr->loc, "cannot modify through a read borrow; it must be a 'mut' or 'own' pointer");
 					expr->setInvalid();
 					return;
 				}
