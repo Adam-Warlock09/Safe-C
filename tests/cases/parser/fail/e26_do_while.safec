@@ -1,0 +1,6 @@
+// SafeC has no do-while loop
+void f(int x) {
+    do {
+        x = x - 1;
+    } while (x);
+}

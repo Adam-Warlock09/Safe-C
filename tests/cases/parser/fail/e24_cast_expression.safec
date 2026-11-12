@@ -1,0 +1,5 @@
+// SafeC has no casts
+int f(float y) {
+    int x = (int) y;
+    return x;
+}

@@ -1,0 +1,35 @@
+/* Grammar corners the other parser tests don't reach: chains of postfix
+   operators, unary operators applied to a postfix expression,
+   right-associative assignment, positional compound literals, qualifiers
+   on multi-level pointers, and an own return type.  Syntax only; several
+   of these lines would be rejected by sema. */
+
+struct Inner {
+    int v;
+};
+
+struct Outer {
+    struct Inner in;
+    struct Outer*? next;
+    int arr[4];
+};
+
+own struct Inner* make_inner(int v) {
+    own struct Inner* p = new struct Inner;
+    p->v = v;
+    return p;
+}
+
+int chains(struct Outer* o, int a, int b, int c) {
+    a = b = c;
+    int x = o->next->in.v;
+    x = make_inner(1)->v;
+    x = -o->arr[2]++;
+    x = !-~a;
+    int* p = &o->arr[3];
+    x = *p * *p;
+    struct Inner i = (struct Inner){ 7 };
+    mut int** q;
+    raw char*?* r;
+    return x;
+}

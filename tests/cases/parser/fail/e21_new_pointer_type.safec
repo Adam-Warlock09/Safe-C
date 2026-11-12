@@ -1,0 +1,4 @@
+// `new` takes a plain type: no pointers, arrays or qualifiers
+void f() {
+    own int* p = new int*;
+}

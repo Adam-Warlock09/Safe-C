@@ -1,0 +1,4 @@
+// `?` only makes a pointer nullable, so it needs a `*` before it
+void f() {
+    int? x;
+}

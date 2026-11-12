@@ -1,0 +1,4 @@
+// `trusted` must be followed by a block
+void f(raw int* p) {
+    trusted *p = 1;
+}

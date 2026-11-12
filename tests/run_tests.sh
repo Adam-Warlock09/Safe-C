@@ -13,6 +13,13 @@
 #   pass/NAME.expected    optional: the stage's output must match it exactly
 #   fail/NAME.safec       the compiler must reject this at that stage
 #
+# What each stage checks:
+#   lexer    safec --till-lexer.  pass: exit 0 and the token list matches.
+#            fail: nonzero exit.
+#   parser   safec --till-parser. pass: exit 0 and the AST matches.
+#            fail: nonzero exit with a "syntax error".
+# In every stage a compiler crash counts as a failure, even for a fail test.
+#
 # tests/known_bugs.txt lists tests that fail today because of a known bug.
 # They show up as KNOWN and don't fail the run. A listed test that passes
 # shows up as FIXED and does fail the run, so the list gets cleaned up as
@@ -78,32 +85,58 @@ known_bug() {   # prints the bug number for a test id, or nothing
 # Each case function runs one test. It returns 0 if the test behaved as
 # expected and 1 if not, and when it fails it leaves the reason in $TMP/why.
 
-check_expected() {   # $1 = actual output file, $2 = .safec path
-    local expected="${2%.safec}.expected"
+# Runs the compiler up to a stage: stdout goes to $TMP/out, stderr to
+# $TMP/err, and the exit code to $RC. A test fails outright if the compiler
+# crashed (killed by a signal, exit code 128 and up), even a "fail" test:
+# crashing is not the same as rejecting a program.
+run_compiler() {   # $1 = stage flag, $2 = file
+    "$COMPILER" "$1" "$2" > "$TMP/out" 2> "$TMP/err"
+    RC=$?
+    if [ $RC -ge 128 ]; then
+        { echo "compiler crashed (exit $RC)"; tail -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    return 0
+}
+
+check_expected() {   # $1 = .safec path; compares stdout with NAME.expected if there is one
+    local expected="${1%.safec}.expected"
     [ -f "$expected" ] || return 0
-    if ! diff -u "$expected" "$1" > "$TMP/diff"; then
+    if ! diff -u "$expected" "$TMP/out" > "$TMP/diff"; then
         { echo "output differs from $expected:"; head -20 "$TMP/diff"; } > "$TMP/why"
         return 1
     fi
     return 0
 }
 
-case_lexer() {   # $1 = pass|fail, $2 = file
-    "$COMPILER" --till-lexer "$2" > "$TMP/out" 2>&1
-    local rc=$?
-    if [ "$1" = pass ]; then
-        if [ $rc -ne 0 ]; then
-            { echo "rejected (exit $rc), should have been accepted:"; head -10 "$TMP/out"; } > "$TMP/why"
-            return 1
-        fi
-        check_expected "$TMP/out" "$2"
-    else
-        if [ $rc -eq 0 ]; then
-            { echo "accepted (exit 0), should have been rejected. Output:"; grep -i error "$TMP/out" | head -5; } > "$TMP/why"
-            return 1
-        fi
-        return 0
+expect_accept() {   # $1 = file
+    if [ $RC -ne 0 ]; then
+        { echo "rejected (exit $RC), should have been accepted:"; cat "$TMP/out" "$TMP/err" | grep -i error | head -5; } > "$TMP/why"
+        return 1
     fi
+    check_expected "$1"
+}
+
+expect_reject() {   # $1 = text the error output must contain (optional)
+    if [ $RC -eq 0 ]; then
+        { echo "accepted (exit 0), should have been rejected. Output:"; cat "$TMP/out" "$TMP/err" | grep -i error | head -5; } > "$TMP/why"
+        return 1
+    fi
+    if [ -n "${1:-}" ] && ! cat "$TMP/out" "$TMP/err" | grep -qi "$1"; then
+        { echo "rejected, but not with a '$1'. Output:"; cat "$TMP/out" "$TMP/err" | head -5; } > "$TMP/why"
+        return 1
+    fi
+    return 0
+}
+
+case_lexer() {   # $1 = pass|fail, $2 = file
+    run_compiler --till-lexer "$2" || return 1
+    if [ "$1" = pass ]; then expect_accept "$2"; else expect_reject; fi
+}
+
+case_parser() {   # $1 = pass|fail, $2 = file; expected output is the AST
+    run_compiler --till-parser "$2" || return 1
+    if [ "$1" = pass ]; then expect_accept "$2"; else expect_reject "syntax error"; fi
 }
 
 # ---- running a stage
