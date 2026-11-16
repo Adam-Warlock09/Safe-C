@@ -295,7 +295,45 @@ std::string CodeGen::gen_expr(const Expr* e) {
     }
     
     if (auto* ic = dyn_cast<ImplicitCastExpr>(e)) {
-        return gen_expr(ic->sub.get());
+        std::string val = gen_expr(ic->sub.get());
+        std::string from_t = llvm_type(ic->sub->type);
+        std::string to_t = llvm_type(ic->type);
+        std::string res = new_temp();
+
+        switch (ic->castKind) {
+            case CastKind::IntegralCast: {
+                // i1 (bool), i8 (char), i32 (int)
+                if (from_t == to_t) return val;
+                if (to_t == "i1") {                 // any nonzero value is true
+                    emit(res + " = icmp ne " + from_t + " " + val + ", 0");
+                } else if (from_t == "i1") {        // true is 1, not -1
+                    emit(res + " = zext i1 " + val + " to " + to_t);
+                } else if (from_t == "i8") {        // char -> int keeps the sign
+                    emit(res + " = sext i8 " + val + " to " + to_t);
+                } else {                            // int -> char drops the high bits
+                    emit(res + " = trunc " + from_t + " " + val + " to " + to_t);
+                }
+                return res;
+            }
+            case CastKind::IntToFloat:
+                emit(res + (from_t == "i1" ? " = uitofp " : " = sitofp ") + from_t + " " + val + " to float");
+                return res;
+            case CastKind::FloatToInt:
+                if (to_t == "i1") emit(res + " = fcmp une float " + val + ", 0.0");
+                else              emit(res + " = fptosi float " + val + " to " + to_t);
+                return res;
+            case CastKind::ToBool:
+                if (from_t == "i1") return val;
+                if (from_t == "float")    emit(res + " = fcmp une float " + val + ", 0.0");
+                else if (from_t == "ptr") emit(res + " = icmp ne ptr " + val + ", null");
+                else                      emit(res + " = icmp ne " + from_t + " " + val + ", 0");
+                return res;
+            case CastKind::NullToPointer:
+            case CastKind::NonNullToNullable:
+            case CastKind::Reborrow:
+                return val;                         // same bits, only the static type changes
+        }
+        return val;
     }
 
     return "";
