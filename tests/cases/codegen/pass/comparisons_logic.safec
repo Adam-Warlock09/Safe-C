@@ -1,0 +1,35 @@
+// Comparisons, logical operators and short-circuit evaluation.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int calls;
+
+bool count(bool v) {
+    calls = calls + 1;
+    return v;
+}
+
+int main() {
+    int a = 3;
+    int b = 7;
+    if (!(a < b)) return 1;
+    if (a > b) return 2;
+    if (!(a <= 3)) return 3;
+    if (!(b >= 7)) return 4;
+    if (a >= b) return 5;
+    if (!(a == 3)) return 6;
+    if (a != 3) return 7;
+    if (!(a < b && b < 10)) return 8;
+    if (!(a > b || b > 5)) return 9;
+    if (!a == true) return 10;                  // !3 is false
+
+    calls = 0;
+    if (count(false) && count(true)) return 11;
+    if (calls != 1) return 12;                  // && skips the right side
+    calls = 0;
+    if (!(count(true) || count(false))) return 13;
+    if (calls != 1) return 14;                  // || skips the right side
+
+    bool t = a < b;
+    if (!t) return 15;
+    return 0;
+}

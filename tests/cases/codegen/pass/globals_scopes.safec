@@ -1,0 +1,38 @@
+// Global initializers, and locals that shadow each other.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int g = 7;
+int h = 2 + 3 * 4;
+char gc = 'z';
+bool gb = true;
+int zero;
+
+void bump() {
+    g = g + 1;
+}
+
+int main() {
+    if (g != 7) return 1;
+    if (h != 14) return 2;
+    if (gc != 'z') return 3;
+    if (!gb) return 4;
+    if (zero != 0) return 5;
+    bump();
+    if (g != 8) return 6;                       // functions share globals
+
+    int x = 1;
+    {
+        int x = 2;                              // shadows the outer x
+        if (x != 2) return 7;
+    }
+    if (x != 1) return 8;
+    for (int i = 0; i < 2; i++) {
+        int x = 10 + i;                         // a fresh x every iteration
+        if (x != 10 + i) return 9;
+    }
+    for (int i = 0; i < 2; i++) {               // a second loop reusing the name i
+        x = x + i;
+    }
+    if (x != 2) return 10;
+    return 0;
+}

@@ -27,6 +27,12 @@
 #              // warning: <text>  the same for a warning
 #              // error            any error on this line
 #            Case is ignored, and anything after " -- " is just a comment.
+#   codegen  safec --emit-llvm, then LLVM's verifier (opt -passes=verify) on
+#            the IR. Only pass tests: anything that passes sema must compile.
+#   safec    the same programs, built into an executable with safec and run.
+#            The exit code must match "// expect-exit: N" in the file (0 if
+#            there's no such line). The programs return the number of the
+#            first check that fails, so exit code 3 means check 3 failed.
 # In every stage a compiler crash counts as a failure, even for a fail test.
 #
 # tests/known_bugs.txt lists tests that fail today because of a known bug.
@@ -44,6 +50,15 @@ COMPILER="./safec"
 CASES="tests/cases"
 KNOWN="tests/known_bugs.txt"
 STAGES="lexer parser sema borrowck codegen safec"
+RUN_TIMEOUT=10   # seconds a compiled test program may run
+
+# the folder a stage's tests live in: safec runs the codegen programs
+dir_of() {
+    case "$1" in
+        safec) echo codegen ;;
+        *)     echo "$1" ;;
+    esac
+}
 
 # the flag a stage belongs to: --sema covers both sema and borrowck
 flag_of() {
@@ -213,12 +228,69 @@ case_sema() {   # $1 = pass|fail, $2 = file
 
 case_borrowck() { case_sema "$@"; }   # same command; the borrow checker runs at the end of sema
 
+# The compiler writes NAME.safec.ll next to the source, so codegen tests
+# compile a copy in the temp folder to keep tests/cases clean.
+case_codegen() {   # $1 = pass, $2 = file
+    cp "$2" "$TMP/prog.safec"
+    run_compiler --emit-llvm "$TMP/prog.safec" || return 1
+    expect_accept "$2" || return 1
+    if ! command -v opt > /dev/null; then
+        echo "'opt' not found: install LLVM to run the codegen tests" > "$TMP/why"
+        return 1
+    fi
+    if ! opt -passes=verify -disable-output "$TMP/prog.safec.ll" > "$TMP/verify" 2>&1; then
+        { echo "the generated LLVM IR is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
+        return 1
+    fi
+    return 0
+}
+
+case_safec() {   # $1 = pass, $2 = file
+    cp "$2" "$TMP/prog.safec"
+    rm -f "$TMP/prog"
+    "$COMPILER" "$TMP/prog.safec" -o "$TMP/prog" > "$TMP/out" 2> "$TMP/err"
+    RC=$?
+    if [ $RC -ne 0 ] || [ ! -x "$TMP/prog" ]; then
+        { echo "could not build the program (exit $RC):"; cat "$TMP/out" "$TMP/err" | grep -iE 'error|warning' | head -5; } > "$TMP/why"
+        return 1
+    fi
+
+    local want
+    want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$2" | head -1)
+    want=${want:-0}
+
+    if command -v timeout > /dev/null; then
+        timeout "$RUN_TIMEOUT" "$TMP/prog" > "$TMP/out" 2> "$TMP/err"
+    else
+        "$TMP/prog" > "$TMP/out" 2> "$TMP/err"   # macOS has no timeout command
+    fi
+    local got=$?
+
+    if [ $got -eq 124 ]; then
+        echo "the program didn't finish within ${RUN_TIMEOUT}s (infinite loop?)" > "$TMP/why"
+        return 1
+    fi
+    if [ $got -ge 128 ]; then
+        echo "the program crashed (exit $got, signal $((got - 128)))" > "$TMP/why"
+        return 1
+    fi
+    if [ "$got" != "$want" ]; then
+        if [ "$want" = 0 ]; then
+            echo "the program returned $got: check $got failed" > "$TMP/why"
+        else
+            echo "the program exited with $got, expected $want" > "$TMP/why"
+        fi
+        return 1
+    fi
+    return 0
+}
+
 # ---- running a stage
 
 TOTAL_PASS=0; TOTAL_KNOWN=0; TOTAL_BAD=0
 
 run_stage() {   # $1 = stage name
-    local stage="$1" dir="$CASES/$1"
+    local stage="$1" dir="$CASES/$(dir_of "$1")"
     local pass=0 known=0 bad=0
 
     [ "$verbose" -eq 1 ] && { echo; echo "${BOLD}== $stage ==${RESET}"; }

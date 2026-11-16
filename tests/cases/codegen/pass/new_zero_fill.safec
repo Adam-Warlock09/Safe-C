@@ -1,0 +1,32 @@
+// `new` gives zeroed memory. Sema and the borrow checker rely on this:
+// they treat every own field of a new struct as null.
+// Allocating, scribbling, freeing and allocating again makes malloc hand
+// back the same dirty memory, so a missing zero-fill shows up.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Big {
+    int a;
+    int b;
+    int c;
+    int d;
+    int e;
+    int f;
+    own struct Big*? next;
+};
+
+int main() {
+    own struct Big* p = new struct Big;
+    p->a = 77; p->b = 77; p->c = 77; p->d = 77; p->e = 77; p->f = 77;
+    free(p);
+
+    own struct Big* q = new struct Big;
+    int bad = 0;
+    if (q->c != 0) bad = 1;
+    if (q->d != 0) bad = 2;
+    if (q->e != 0) bad = 3;
+    if (q->f != 0) bad = 4;
+    if (q->next != null) bad = 5;
+    q->next = null;                             // it's garbage if zero-fill failed; don't free it
+    free(q);
+    return bad;
+}

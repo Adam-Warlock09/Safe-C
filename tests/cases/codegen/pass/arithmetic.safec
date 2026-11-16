@@ -1,0 +1,28 @@
+// Integer arithmetic and bitwise operators.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int main() {
+    int a = 17;
+    int b = 5;
+    if (a + b != 22) return 1;
+    if (a - b != 12) return 2;
+    if (a * b != 85) return 3;
+    if (a / b != 3) return 4;
+    if (a % b != 2) return 5;
+    if (-a != 0 - 17) return 6;
+    if (+a != 17) return 7;
+    if (a + b * 2 != 27) return 8;              // * before +
+    if ((a + b) * 2 != 44) return 9;
+    if (a - b - 2 != 10) return 10;             // left to right
+    if ((a & b) != 1) return 11;                // 10001 & 00101
+    if ((a | b) != 21) return 12;
+    if ((a ^ b) != 20) return 13;
+    if ((1 << 4) != 16) return 14;
+    if ((a >> 2) != 4) return 15;
+    if (~0 != -1) return 16;
+    if (-7 / 2 != -3) return 17;                // division rounds toward zero
+    if (-7 % 2 != -1) return 18;
+    char c = 'a';
+    if (c + 1 != 98) return 19;                 // char promotes to int
+    return 0;
+}

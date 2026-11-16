@@ -1,0 +1,69 @@
+// Borrows, own pointers, new and free.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Node {
+    int value;
+    own struct Node*? next;
+};
+
+void set(mut int* p, int v) {
+    *p = v;
+}
+
+int get(int* p) {
+    return *p;
+}
+
+own struct Node* push(own struct Node*? head, int v) {
+    own struct Node* n = new struct Node;
+    n->value = v;
+    n->next = head;
+    return n;
+}
+
+int sum_list(struct Node*? n) {
+    int s = 0;
+    while (n != null) {
+        s = s + n->value;
+        n = n->next;
+    }
+    return s;
+}
+
+void free_list(own struct Node*? n) {
+    while (n != null) {
+        own struct Node*? rest = n->next;
+        n->next = null;
+        free(n);
+        n = rest;
+    }
+}
+
+int main() {
+    int x = 1;
+    set(&mut x, 42);                            // write through a mut borrow
+    if (x != 42) return 1;
+    if (get(&x) != 42) return 2;
+
+    // From here on, record the first failing check instead of returning
+    // early, so everything gets freed (the borrow checker insists).
+    int bad = 0;
+    own int* h = new int;
+    *h = 7;
+    *h += 1;
+    if (*h != 8) bad = 3;
+    set(h, 9);                                  // own pointer lent out as mut
+    if (bad == 0 && get(h) != 9) bad = 4;
+    free(h);
+
+    own struct Node*? list = null;
+    for (int i = 1; i <= 4; i++) list = push(list, i);
+    if (bad == 0 && sum_list(list) != 10) bad = 5;
+    if (list == null) {
+        if (bad == 0) bad = 6;
+    } else {
+        if (bad == 0 && list->value != 4) bad = 7;   // pushed last, so it's first
+    }
+    free_list(list);
+    return bad;
+}
