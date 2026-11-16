@@ -151,9 +151,13 @@ SafeC follows C's arithmetic behaviour:
 - `x op= e` works like `x = x op e`. For example, `b -= -3` on a boolean keeps it true.
 - Array accesses are checked at runtime to prevent out-of-bounds access.
 - Unsized array parameters and code inside `trusted` are exceptions to runtime bounds checking.
-- Integer overflow is not checked at runtime.
+- Unlike C, `int` arithmetic is checked at runtime and stops the program (like an out-of-bounds index) on:
+  overflow of `+`, `-`, `*`, unary `-`, `++`, `--` and `op=`; division or remainder by zero; `INT_MIN / -1`;
+  and shifting by a negative amount or by 32 or more. `char` arithmetic is done in `int`, so `char` results
+  wrap when stored back. Inside `trusted` nothing is checked and overflow wraps around.
 
-Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`.
+Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`, `codegen/pass/arith_checks_boundaries`,
+`codegen/pass/trap_*` (programs that must be stopped, marked `// expect-trap`).
 
 ## Grammar (EBNF)
 

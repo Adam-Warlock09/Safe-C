@@ -1,0 +1,11 @@
+// *= is checked like *: x op= e computes x op e.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int x = 65536;
+    x *= 2;
+    x *= 32768;
+    return 0;
+}

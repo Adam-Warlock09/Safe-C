@@ -35,6 +35,8 @@
 #            The exit code must match "// expect-exit: N" in the file (0 if
 #            there's no such line). The programs return the number of the
 #            first check that fails, so exit code 3 means check 3 failed.
+#            "// expect-trap": the program must be stopped by a runtime check
+#            (bounds, overflow, division by zero, ...) instead.
 #   interop  C and SafeC together: pass/NAME.safec is built with safec -c and
 #            linked with pass/NAME.c, which has main. The program's exit code
 #            must match "// expect-exit: N" in the .c file (0 if none).
@@ -273,11 +275,13 @@ case_safec() {   # $1 = pass|fail, $2 = file
 }
 
 # Runs $TMP/prog and checks its exit code against "// expect-exit: N" in the
-# file (0 if there's no such line).
-run_built_program() {   # $1 = the test file with the expect-exit marker
-    local want
+# file (0 if there's no such line). "// expect-trap" means the program must
+# be stopped by a runtime check (llvm.trap: SIGILL on x86-64, SIGTRAP on arm64).
+run_built_program() {   # $1 = the test file with the expect-exit/expect-trap marker
+    local want trap=0
     want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$1" | head -1)
     want=${want:-0}
+    grep -qE '^[[:space:]]*//[[:space:]]*expect-trap' "$1" && trap=1
 
     if command -v timeout > /dev/null; then
         timeout "$RUN_TIMEOUT" "$TMP/prog" > "$TMP/out" 2> "$TMP/err"
@@ -288,6 +292,11 @@ run_built_program() {   # $1 = the test file with the expect-exit marker
 
     if [ $got -eq 124 ]; then
         echo "the program didn't finish within ${RUN_TIMEOUT}s (infinite loop?)" > "$TMP/why"
+        return 1
+    fi
+    if [ $trap -eq 1 ]; then
+        [ $got -eq 132 ] || [ $got -eq 133 ] && return 0     # SIGILL, SIGTRAP
+        echo "the program should have been stopped by a runtime check, but exited with $got" > "$TMP/why"
         return 1
     fi
     if [ $got -ge 128 ]; then

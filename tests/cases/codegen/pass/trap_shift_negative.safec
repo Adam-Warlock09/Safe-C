@@ -1,0 +1,11 @@
+// Shifting by a negative amount is out of range.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int x = 64;
+    int n = -1;
+    int bad = x >> n;
+    return 0;
+}

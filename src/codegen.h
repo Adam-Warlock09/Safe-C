@@ -2,6 +2,7 @@
 #pragma once
 #include "new_ast.h"
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -66,6 +67,7 @@ private:
     // String literals pooled during expression codegen -> emitted at module top
     struct StringConst { std::string global_name; std::string raw_bytes; size_t byte_len; };
     std::vector<StringConst> string_pool_;
+    std::set<std::string> used_intrinsics_;   // declare lines, emitted at module end
 
     // Struct name -> list of fields (for GEP field index lookup)
     std::unordered_map<std::string, const StructDecl*> struct_defs_;
@@ -114,6 +116,10 @@ private:
     std::string convert_int(const std::string& val, const std::string& from_t, const std::string& to_t);
     std::string convert_scalar(const std::string& val, const std::string& from_t, const std::string& to_t);
     std::string emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
+    void emit_trap_if(const std::string& cond, const std::string& what);
+    std::string emit_checked_arith(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
+    void emit_division_checks(const std::string& t, const std::string& a, const std::string& b);
+    void emit_shift_check(const std::string& t, const std::string& n);
     std::pair<std::string, std::string> gen_update(const std::string& ptr, const Type* ty, BinaryOp op,
                                                    const std::string& rhs, const std::string& op_t);
     std::string float_const(double v) const;
