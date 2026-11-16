@@ -49,6 +49,12 @@ private:
     // Active lexical scopes inside current function
     std::vector<CGScopeFrame> scopes_;
 
+    // Each local and parameter of the current function -> its alloca. Keyed by the
+    // declaration sema resolved, so shadowed names and reused loop names stay apart
+    std::unordered_map<const ValueDecl*, std::string> local_addr_;
+    std::unordered_map<std::string, int> addr_uses_;   // alloca names already taken
+    std::string current_block_;                        // label of the block being filled
+
     // --- Shared Emission Helpers ---
     std::string new_temp() { return "%t" + std::to_string(++temp_counter_); }
     std::string new_label(const std::string& pfx) { return pfx + "." + std::to_string(++label_counter_); }
@@ -58,6 +64,7 @@ private:
     void emit_label(const std::string& lbl) {
         body_ir_ << lbl << ":\n";
         block_terminated_ = false;
+        current_block_ = lbl;
     }
     void emit_terminator(const std::string& instr) {
         if (!block_terminated_) {
@@ -79,6 +86,15 @@ private:
     std::string gen_short_circuit_and(const BinaryExpr* b);
     std::string gen_short_circuit_or(const BinaryExpr* b);
     void emit_Store_compound_lit(const std::string& dest_ptr, const CompoundLiteralExpr* cl);
+
+    std::string convert_int(const std::string& val, const std::string& from_t, const std::string& to_t);
+    std::string emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
+    std::pair<std::string, std::string> gen_update(const std::string& ptr, const Type* ty, BinaryOp op, const std::string& rhs);
+    std::string float_const(double v) const;
+    int64_t const_int(const Expr* e);
+    double const_float(const Expr* e);
+    std::string const_init(const Expr* e);
+    std::string new_addr(const std::string& name);
 
     void gen_function(const FunctionDecl& fn);
     void emit_entry_allocas(const Stmt* s);

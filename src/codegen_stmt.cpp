@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include <cstdio>
 
 namespace safec {
 
@@ -15,9 +16,21 @@ void CodeGen::generate(const Program& prog) {
     }
 
     // Emit the accumulated string pool at the end of the module
+    // Inside c"..." only printable characters can appear as themselves; everything
+    // else, and " and \ themselves, is written as \XX (two hex digits)
     for (const auto& str : string_pool_) {
-        out_ << str.global_name << " = private unnamed_addr constant [" 
-             << str.byte_len << " x i8] c\"" << str.raw_bytes << "\\00\"\n";
+        out_ << str.global_name << " = private unnamed_addr constant ["
+             << str.byte_len << " x i8] c\"";
+        for (unsigned char c : str.raw_bytes) {
+            if (c >= 0x20 && c < 0x7f && c != '"' && c != '\\') {
+                out_ << c;
+            } else {
+                char hex[4];
+                std::snprintf(hex, sizeof hex, "\\%02X", c);
+                out_ << hex;
+            }
+        }
+        out_ << "\\00\"\n";
     }
 }
 
@@ -28,12 +41,16 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     block_terminated_ = false;
     body_ir_.str(""); 
     scopes_.clear();
+    local_addr_.clear();
+    addr_uses_.clear();
 
     const Type* ret_type = fn.type ? cast<FunctionType>(fn.type)->returnType() : nullptr;
     out_ << "\ndefine " << llvm_type(ret_type) << " @" << fn.name << "(";
     
     for (size_t i = 0; i < fn.params.size(); ++i) {
-        out_ << llvm_type(fn.params[i]->type) << " %" << fn.params[i]->name;
+        // arrays come in as a pointer to their first element
+        const Type* pt = fn.params[i]->type;
+        out_ << (isa<ArrayType>(pt) ? "ptr" : llvm_type(pt)) << " %" << fn.params[i]->name << ".arg";
         if (i + 1 < fn.params.size()) out_ << ", ";
     }
     out_ << ") {\n";
@@ -42,10 +59,15 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     push_scope(); 
     
     for (const auto& p : fn.params) {
-        std::string addr = "%" + p->name + ".addr";
+        if (isa<ArrayType>(p->type)) {      // the incoming pointer already is the array's address
+            local_addr_[p.get()] = "%" + p->name + ".arg";
+            continue;
+        }
+        std::string addr = new_addr(p->name);
         emit(addr + " = alloca " + llvm_type(p->type));
-        emit("store " + llvm_type(p->type) + " %" + p->name + ", ptr " + addr);
+        emit("store " + llvm_type(p->type) + " %" + p->name + ".arg, ptr " + addr);
         scopes_.back().vars[p->name] = {addr, p->type};
+        local_addr_[p.get()] = addr;
     }
 
     emit_entry_allocas(fn.body.get());
@@ -53,15 +75,23 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
 
     emit_label("body");
     gen_compound_stmt(fn.body.get(), false); 
+    pop_scope_and_emit_defers();    // falling off the end runs the function-level defers
     
     if (!block_terminated_) {
         std::string ret_t = llvm_type(ret_type);
         if (ret_t == "void") emit_terminator("ret void");
-        else emit_terminator("ret " + ret_t + " 0"); 
+        else emit_terminator("ret " + ret_t + " " + llvm_zero_init(ret_type));
     }
 
     out_ << body_ir_.str() << "}\n";
-    pop_scope_and_emit_defers(); 
+}
+
+// A fresh alloca name for a local: %x.addr, then %x.addr.1, %x.addr.2 ... for
+// later variables with the same name (shadowing, two loops that both declare i)
+std::string CodeGen::new_addr(const std::string& name) {
+    int n = addr_uses_[name]++;
+    if (n == 0) return "%" + name + ".addr";
+    return "%" + name + ".addr." + std::to_string(n);
 }
 
 void CodeGen::emit_entry_allocas(const Stmt* s) {
@@ -78,10 +108,16 @@ void CodeGen::emit_entry_allocas(const Stmt* s) {
         emit_entry_allocas(fs->body.get());
     } else if (auto* ts = dyn_cast<TrustedStmt>(s)) {
         emit_entry_allocas(ts->body.get());
+    } else if (auto* sw = dyn_cast<SwitchStmt>(s)) {
+        for (const auto& c : sw->cases)
+            for (const auto& stmt : c->body) emit_entry_allocas(stmt.get());
+    } else if (auto* df = dyn_cast<DeferStmt>(s)) {
+        emit_entry_allocas(df->body.get());
     } else if (auto* ds = dyn_cast<DeclStmt>(s)) {
         for (const auto& vd : ds->decls) {
-            std::string addr = "%" + vd->name + ".addr";
+            std::string addr = new_addr(vd->name);
             emit(addr + " = alloca " + llvm_type(vd->type));
+            local_addr_[vd.get()] = addr;
         }
     }
 }
@@ -111,7 +147,7 @@ void CodeGen::gen_stmt(const Stmt* s) {
         scopes_.back().defers.push_back(ds->body.get());
     } else if (auto* decls = dyn_cast<DeclStmt>(s)) {
         for (const auto& vd : decls->decls) {
-            std::string addr = "%" + vd->name + ".addr";
+            std::string addr = local_addr_.at(vd.get());
             scopes_.back().vars[vd->name] = {addr, vd->type};
             if (vd->init) {
                 std::string rhs = gen_expr(vd->init.get());
@@ -216,8 +252,10 @@ void CodeGen::gen_stmt(const Stmt* s) {
         emit_label(lbl_end);
         pop_scope_and_emit_defers(); 
     } else if (auto* sw = dyn_cast<SwitchStmt>(s)) {
-        std::string cond_val = gen_expr(sw->cond.get());
-        std::string cond_type = llvm_type(sw->cond->type); 
+        // Compare as int: sema doesn't convert case values to the condition's type,
+        // so a char switch can have int cases (and sema checks them as int values)
+        std::string cond_type = "i32";
+        std::string cond_val = convert_int(gen_expr(sw->cond.get()), llvm_type(sw->cond->type), cond_type);
         std::string lbl_end = new_label("sw.end");
         
         std::string default_lbl = lbl_end; 
@@ -229,7 +267,7 @@ void CodeGen::gen_stmt(const Stmt* s) {
             auto* switch_case = sw->cases[i].get();
             if (auto* case_st = dyn_cast<CaseStmt>(switch_case)) {
                 case_labels[i] = new_label("sw.case");
-                std::string case_val = gen_expr(case_st->value.get());
+                std::string case_val = std::to_string(const_int(case_st->value.get()));
                 case_vals_and_labels.push_back({case_val, case_labels[i]});
             } else if (dyn_cast<DefaultStmt>(switch_case)) {
                 case_labels[i] = new_label("sw.default");

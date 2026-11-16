@@ -55,12 +55,16 @@ int with_defer() {
     return r;
 }
 
-int no_final_return(int x) {    // warning: may exit without returning -- the simple check only looks at the last statement
+int no_final_return(int x) {    // both branches return: no warning
     if (x) return 1;
     else return 2;
 }
 
+int may_fall_off(int x) {       // warning: may exit without returning
+    if (x) return 1;
+}
+
 int main() {
     early(0);
-    return classify(1) + loops(5) + g + with_defer() + no_final_return(1);
+    return classify(1) + loops(5) + g + with_defer() + no_final_return(1) + may_fall_off(1);
 }

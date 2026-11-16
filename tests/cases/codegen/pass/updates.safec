@@ -1,0 +1,62 @@
+// Compound assignment, ++/-- and unary operators on every arithmetic type.
+// bool and char are computed as int and converted back, as in C.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int main() {
+    int i = 7;
+    i += 3; if (i != 10) return 1;
+    i -= 4; if (i != 6) return 2;
+    i *= 5; if (i != 30) return 3;
+    i /= 4; if (i != 7) return 4;
+    i %= 4; if (i != 3) return 5;
+    i <<= 3; if (i != 24) return 6;
+    i >>= 2; if (i != 6) return 7;
+    i &= 3; if (i != 2) return 8;
+    i |= 9; if (i != 11) return 9;
+    i ^= 1; if (i != 10) return 10;
+    int r = (i += 5);                           // the value of an assignment is the new value
+    if (r != 15) return 11;
+
+    char c = 'a';
+    c += 2; if (c != 'c') return 12;
+    c = 127;
+    c += 1;                                     // wraps like a C char
+    if (c != -128) return 13;
+    c--; if (c != 127) return 14;
+
+    float f = 1.5;
+    f += 1; if (f != 2.5) return 15;
+    f *= 2.0; if (f != 5.0) return 16;
+    f /= 4; if (f != 1.25) return 17;
+    f++; if (f != 2.25) return 18;
+    --f; if (f != 1.25) return 19;
+
+    bool b = false;
+    b += 1; if (!b) return 20;                  // 0 + 1 is nonzero: true
+    b += 1; if (!b) return 21;                  // 1 + 1 = 2 is still true, not 0
+    b--; if (b) return 22;
+    b--; if (!b) return 23;                     // 0 - 1 = -1 is true
+
+    int k = 5;
+    if (k++ != 5) return 24;                    // postfix gives the old value
+    if (k != 6) return 25;
+    if (++k != 7) return 26;                    // prefix gives the new value
+    if (k-- != 7) return 27;
+    if (--k != 5) return 28;
+
+    int arr[3];
+    arr[0] = 0; arr[1] = 0; arr[2] = 0;
+    int j = 0;
+    arr[j++] += 4;                              // the target is computed once
+    if (j != 1 || arr[0] != 4 || arr[1] != 0) return 29;
+
+    char d = 'A';
+    int neg = -d;                               // -c and ~c work on the int value of c
+    if (neg != -65) return 30;
+    if (~d != -66) return 31;
+    float g = 2.5;
+    float h = -g;
+    if (h != -2.5) return 32;
+    if (+d != 65) return 33;
+    return 0;
+}
