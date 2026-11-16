@@ -25,11 +25,14 @@ struct CGScopeFrame {
 class CodeGen {
 public:
     explicit CodeGen(std::ostream& out) : out_(out) {}
+    // Rejects programs sema accepts but codegen can't build; run before generate
+    static bool check_reserved_names(const Program& prog, DiagnosticsEngine& diag);
     void generate(const Program& tu);
 
 private:
     std::ostream& out_;
     std::ostringstream body_ir_;     // Buffers instructions for current function
+    std::ostringstream temp_allocas_; // Entry-block allocas for temporaries (temp_alloca)
     const Program* prog_ = nullptr;
     const FunctionDecl* current_fn_ = nullptr;
 
@@ -95,11 +98,13 @@ private:
     double const_float(const Expr* e);
     std::string const_init(const Expr* e);
     std::string new_addr(const std::string& name);
+    std::string temp_alloca(const Type* t);
 
     void gen_function(const FunctionDecl& fn);
     void emit_entry_allocas(const Stmt* s);
     void gen_stmt(const Stmt* s);
     void gen_compound_stmt(const CompoundStmt* cs, bool push_new_scope = true);
+    void gen_branch_stmt(const Stmt* s);
 
     void push_scope(bool is_loop_or_switch = false, std::string brk = "", std::string cont = "");
     void pop_scope_and_emit_defers();

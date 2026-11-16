@@ -16,13 +16,15 @@ ast_dump.o
 sema.o
 borrowck.o
 driver.o
-driver
+/driver
 
 # macOS
 .DS_Store
 
-# LLVM IR the safec driver writes next to each compiled file
-*.safec.ll
+# LLVM IR from safec --emit-llvm, written next to each compiled file
+*.ll
+# the target triple and data layout, generated from clang by the Makefile
+target_info.h
 # the compiler and object files the Makefile builds
 /safec
 *.o

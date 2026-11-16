@@ -1,0 +1,26 @@
+// A defer that is the whole then/else branch of an if (no braces) belongs
+// to that branch: it runs only when the branch is taken, as it would with
+// braces around it.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int count;
+
+void add_one() { count = count + 1; }
+void add_ten() { count = count + 10; }
+
+int defer_in_untaken_branch_returns(bool take) {
+    if (take) defer add_one();
+    return count;                            // the branch's defer already ran
+}
+
+int main() {
+    { if (false) defer add_one(); }
+    if (count != 0) return 1;                // branch not taken: nothing runs
+    { if (true) defer add_one(); }
+    if (count != 1) return 2;
+    { if (false) defer add_one(); else defer add_ten(); }
+    if (count != 11) return 3;               // only the else branch's defer
+    if (defer_in_untaken_branch_returns(false) != 11) return 4;
+    if (defer_in_untaken_branch_returns(true) != 12) return 5;
+    return 0;
+}
