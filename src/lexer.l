@@ -14,6 +14,8 @@ FS      (f|F)
 /* parser sets this to 0 to mute the trace; 1 = print like before */
 int safec_lexer_trace = 1;
 
+/* Number of lexical errors so far. The driver rejects the program if it isn't 0. */
+int safec_lexer_errors = 0;
 /* 1-based column of the most recently returned token's start. */
 int safec_lexer_token_column = 1;
 
@@ -64,24 +66,24 @@ static int safec_lexer_current_column = 1;
 
 {L}({L}|{D})*   { if (safec_lexer_trace) printf("TOKEN: IDENTIFIER, NUMBER: %d\n", IDENTIFIER); return IDENTIFIER; }
 
-{D}+\.{D}+([eE][+-]?{D}+)?[fF]{2,}                          { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
-{D}+\.{D}+[eE][+-]?                                         { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
-{D}+\.{D}+([eE][+-]?{D}+)?[fF]?[a-dg-zA-DF-Z_][a-zA-Z0-9_]* { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
-{D}+\.{D}*\.{D}*([eE][+-]?{D}+)?[fF]?                       { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}+([eE][+-]?{D}+)?[fF]{2,}                          { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}+[eE][+-]?                                         { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}+([eE][+-]?{D}+)?[fF]?[a-dg-zA-DG-Z_][a-zA-Z0-9_]* { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}+\.{D}*\.{D}*([eE][+-]?{D}+)?[fF]?                       { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
 
 0[xX]{H}+       { if (safec_lexer_trace) printf("TOKEN: INT_LITERAL, NUMBER: %d\n", INT_LITERAL); return INT_LITERAL; }
 {D}+            { if (safec_lexer_trace) printf("TOKEN: INT_LITERAL, NUMBER: %d\n", INT_LITERAL); return INT_LITERAL; }
 
 '(\\.|[^\\'\n])'                { if (safec_lexer_trace) printf("TOKEN: CHAR_LITERAL, NUMBER: %d\n", CHAR_LITERAL); return CHAR_LITERAL; }
-'(\\.|[^\\'\n])*'?              { printf("ERROR at line %d: invalid character literal: %s\n", yylineno, yytext); }
+'(\\.|[^\\'\n])*'?              { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: invalid character literal: %s\n", yylineno, yytext); }
 
 {D}+{E}{FS}?                    { if (safec_lexer_trace) printf("TOKEN: FLOAT_LITERAL, NUMBER: %d\n", FLOAT_LITERAL); return FLOAT_LITERAL; }
 {D}*"."{D}+({E})?{FS}?          { if (safec_lexer_trace) printf("TOKEN: FLOAT_LITERAL, NUMBER: %d\n", FLOAT_LITERAL); return FLOAT_LITERAL; }
 {D}+"."{D}*({E})?{FS}?          { if (safec_lexer_trace) printf("TOKEN: FLOAT_LITERAL, NUMBER: %d\n", FLOAT_LITERAL); return FLOAT_LITERAL; }
-{D}({L}|{D})*                   { printf("ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
+{D}({L}|{D})*                   { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: malformed number: %s\n", yylineno, yytext); }
 
 \"(\\.|[^\\\"\n])*\"            { if (safec_lexer_trace) printf("TOKEN: STRING_LITERAL, NUMBER: %d\n", STRING_LITERAL); return STRING_LITERAL; }
-\"(\\.|[^\\\"\n])*              { printf("ERROR at line %d: unterminated string: %s\n", yylineno, yytext); }
+\"(\\.|[^\\\"\n])*              { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: unterminated string: %s\n", yylineno, yytext); }
 
 "..."       { if (safec_lexer_trace) printf("TOKEN: ELLIPSIS, NUMBER: %d\n", ELLIPSIS); return ELLIPSIS; }
 ">>="       { if (safec_lexer_trace) printf("TOKEN: RIGHT_SHIFT_ASSIGN, NUMBER: %d\n", RIGHT_SHIFT_ASSIGN); return RIGHT_SHIFT_ASSIGN; }
@@ -140,13 +142,13 @@ static int safec_lexer_current_column = 1;
 <COMMENT>"*"      { }
 <COMMENT>\n        { }
 <COMMENT><<EOF>> {
-    printf("ERROR at line %d: unterminated comment\n", yylineno);
+    safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: unterminated comment\n", yylineno);
     return 0;
 }
 
 [ \t\v\n\f\r]+    { }
 
-.           { printf("ERROR at line %d: unknown character: %s\n", yylineno, yytext); }
+.           { safec_lexer_errors++; fprintf(stderr, "ERROR at line %d: unknown character: %s\n", yylineno, yytext); }
 %%
 
 int yywrap(void) {
@@ -161,6 +163,6 @@ int main(void) {
         if (safec_lexer_trace)
             printf("TOKEN: %d, COLUMN: %d\n", token, safec_lexer_token_column);
     }
-    return 0;
+    return safec_lexer_errors > 0 ? 1 : 0;
 }
 #endif

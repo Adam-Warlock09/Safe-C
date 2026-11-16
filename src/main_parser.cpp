@@ -23,6 +23,7 @@ extern char *yytext;
 extern int    yylineno;
 extern FILE *yyin;
 extern int   safec_lexer_trace;
+extern int   safec_lexer_errors;
 }
 
 namespace safec {
@@ -154,7 +155,7 @@ int main(int argc, char **argv) {
     std::unique_ptr<safec::Program> prog = safec::parseFile(file, diag);
 
     diag.print(std::cerr);
-    if (!prog || diag.hasErrors()) return 1;
+    if (!prog || diag.hasErrors() || safec_lexer_errors > 0) return 1;
 
     std::printf("OK: parsed %zu top-level item(s)\n", prog->decls.size());
     if (dump_ast) {

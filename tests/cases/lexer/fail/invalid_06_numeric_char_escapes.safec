@@ -1,0 +1,3 @@
+// Hex and octal character escapes aren't supported
+char a = '\x41';
+char b = '\077';

@@ -35,6 +35,7 @@ extern char *yytext;
 extern int   yylineno;
 extern FILE *yyin;
 extern int   safec_lexer_trace;
+extern int   safec_lexer_errors;
 }
 
 // ---- glue the bison parser needs: a token source and an error hook
@@ -156,7 +157,7 @@ int main(int argc, char **argv) {
     if (till == LEXER) {
         safec_lexer_trace = 1;
         while (yylex() != 0) {}
-        return 0;
+        return safec_lexer_errors > 0 ? 1 : 0;
     }
     safec_lexer_trace = 0;
 
@@ -165,7 +166,7 @@ int main(int argc, char **argv) {
     safec::Program prog;
     safec::SafeCParser parser(prog, diag);
     parser.parse();
-    if (diag.hasErrors()) {
+    if (diag.hasErrors() || safec_lexer_errors > 0) {
         diag.print(std::cerr);
         return 1;
     }
