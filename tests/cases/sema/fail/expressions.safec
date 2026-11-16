@@ -139,3 +139,35 @@ struct S compound_too_many() {
 int compound_not_struct() {
     return (int){ 1 };              // error: compound literal requires struct type
 }
+
+void pointer_plus_pointer(int* p, int* q) {
+    bool b = p - q == 0;            // error: invalid operands to binary '-'
+}
+
+void struct_plus_int(struct S s) {
+    int y = s + 1;                  // error: binary operator '+' requires scalar operands
+}
+
+void null_less_than(int x) {
+    bool b = null < x;              // error: relational comparison requires arithmetic operands
+}
+
+void null_plus(int x) {
+    int y = null + x;               // error: arithmetic operator requires numeric operands
+}
+
+void compound_on_borrow(int* p) {
+    p += 1;                         // error: pointer arithmetic is only allowed on 'raw' pointers
+}
+
+void compound_on_raw(raw int* p) {
+    p += 1;                         // error: pointer arithmetic is not allowed outside 'trusted' blocks
+}
+
+void compound_pointer_times(mut int* p) {
+    p *= 2;                         // error: invalid pointer operands to compound assignment '*='
+}
+
+void compound_on_struct(struct S s) {
+    s += 1;                         // error: compound arithmetic assignment requires numeric operands
+}

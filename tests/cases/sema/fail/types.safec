@@ -73,3 +73,13 @@ void own_array() {
 int* returns_borrow(int* p) {       // error: cannot be returned from a function
     return p;
 }
+
+void global_void;                   // error: variable cannot have void type -- the global form
+
+struct Shelf {
+    struct Item items[2];           // error: arrays of owning type 'struct Item' -- Item owns something, but is declared below
+};
+
+struct Item {
+    own int*? p;
+};

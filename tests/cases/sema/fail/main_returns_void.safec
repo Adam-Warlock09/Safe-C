@@ -1,0 +1,4 @@
+// main must return int (the other main rule, no parameters, is in decls_scopes)
+
+void main() {                       // error: main() must return int
+}

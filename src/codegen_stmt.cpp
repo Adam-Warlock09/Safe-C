@@ -320,22 +320,29 @@ void CodeGen::pop_scope_and_emit_defers() {
     }
 }
 
+// Both collect the defers first and run them after: running a defer body like
+// `defer { ... }` pushes a scope, which can move scopes_ in memory and leave a
+// loop over it reading freed memory
 void CodeGen::emit_defers_for_return() {
+    std::vector<const Stmt*> to_run;
     for (auto scope_it = scopes_.rbegin(); scope_it != scopes_.rend(); ++scope_it) {
         for (auto defer_it = scope_it->defers.rbegin(); defer_it != scope_it->defers.rend(); ++defer_it) {
-            gen_stmt(*defer_it);
+            to_run.push_back(*defer_it);
         }
     }
+    for (const Stmt* d : to_run) gen_stmt(d);
 }
 
 void CodeGen::emit_defers_for_jump(bool is_break) {
+    std::vector<const Stmt*> to_run;
     for (auto scope_it = scopes_.rbegin(); scope_it != scopes_.rend(); ++scope_it) {
         for (auto defer_it = scope_it->defers.rbegin(); defer_it != scope_it->defers.rend(); ++defer_it) {
-            gen_stmt(*defer_it);
+            to_run.push_back(*defer_it);
         }
         if (is_break && scope_it->is_loop_or_switch) break;
         if (!is_break && !scope_it->continue_label.empty()) break;
     }
+    for (const Stmt* d : to_run) gen_stmt(d);
 }
 
 CGVarInfo CodeGen::lookup_var(const std::string& name) const {
