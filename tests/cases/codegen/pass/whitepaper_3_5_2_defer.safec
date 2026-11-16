@@ -1,0 +1,54 @@
+// Whitepaper §3.5.2: defer runs its statement when the enclosing {} block
+// exits: at the closing brace, on return, and on break or continue.
+// Deferred frees are counted to check each one ran exactly once.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int freed = 0;
+
+void release(own int* p) {
+    free(p);
+    freed = freed + 1;
+}
+
+// The whitepaper's example: free(x) runs at the closing brace
+int block_exit() {
+    {
+        own int* x = new int;
+        defer release(x);
+        *x = 100;
+        // ... complex control flow using x ...
+    }   // release(x) executes automatically here
+    return freed;
+}
+
+// Several return paths, one defer: no path leaks
+int early_returns(int path) {
+    own int* x = new int;
+    defer release(x);
+    *x = path;
+    if (path == 1) return 1;
+    if (path == 2) return 2;
+    return 3;
+}
+
+// break and continue leave the loop body's block, so its defer runs
+int loop_exits() {
+    int iterations = 0;
+    for (int i = 0; i < 10; i++) {
+        own int* x = new int;
+        defer release(x);
+        iterations = iterations + 1;
+        if (i == 1) continue;
+        if (i == 3) break;
+    }
+    return iterations;
+}
+
+int main() {
+    if (block_exit() != 1) return 1;
+    if (early_returns(1) != 1 || early_returns(2) != 2 || early_returns(3) != 3) return 2;
+    if (freed != 4) return 3;
+    if (loop_exits() != 4) return 4;
+    if (freed != 8) return 5;
+    return 0;
+}

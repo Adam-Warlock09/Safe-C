@@ -1,0 +1,59 @@
+// Whitepaper §3.3.3: ownership inside structs. A struct with own fields owns
+// what they point to. Functions take it by read borrow (StructType*) or write
+// borrow (mut StructType*). Moving an own field out through a write borrow
+// requires putting a new owner or null back before the borrow ends.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Holder {
+    int id;
+    own int*? data;
+};
+
+// read borrow: may look, not modify
+int peek(struct Holder* h) {
+    int v = -1;
+    int*? d = h->data;
+    if (d != null) {
+        v = *d;
+    }
+    return v;
+}
+
+// write borrow: moves the old owner out, puts a new one in, frees the old one
+int replace(mut struct Holder* h, int value) {
+    own int*? old = h->data;
+    own int* fresh = new int;
+    *fresh = value;
+    h->data = fresh;          // a valid owner is back in the field
+    int previous = -1;
+    if (old != null) {
+        previous = *old;
+        free(old);
+    }
+    return previous;
+}
+
+int main() {
+    int bad = 0;
+    struct Holder h = (struct Holder){ .id = 1, .data = null };
+
+    if (peek(&h) != -1) bad = 1;
+    if (replace(&mut h, 10) != -1) bad = 2;   // nothing to replace yet
+    if (peek(&h) != 10) bad = 3;
+    if (replace(&mut h, 20) != 10) bad = 4;   // the old owner is freed
+    if (peek(&h) != 20) bad = 5;
+
+    // Emptying h is done here, not in a function taking &mut h: the borrow
+    // checker looks at one function at a time, so it couldn't see that such a
+    // function left h.data null (README, "Differences from the whitepaper" #3)
+    own int*? taken = h.data;
+    h.data = null;
+    if (peek(&h) != -1) bad = 6;
+    if (taken != null) {
+        if (*taken != 20) bad = 7;
+        free(taken);
+    } else {
+        bad = 8;
+    }
+    return bad;
+}
