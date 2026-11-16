@@ -1,0 +1,24 @@
+// The borrow checker works one function at a time: after free_all(&mut b) it can't
+// know that b.head is null, so b.head may still own something when main returns.
+// (The whitepaper's case study ends like this with list_free(&mut list); the
+// version in codegen/pass/case_study_list hands the nodes over explicitly.)
+struct Node { int v; own struct Node*? next; };
+struct Bag { own struct Node*? head; };
+
+void free_all(mut struct Bag* b) {
+    own struct Node*? n = b->head;
+    b->head = null;
+    while (n != null) {
+        own struct Node* x = n;
+        n = x->next;
+        x->next = null;
+        free(x);
+    }
+}
+
+int main() {
+    struct Bag b = (struct Bag){ null };
+    b.head = new struct Node;
+    free_all(&mut b);
+    return 0;               // error: 'b.head' may be leaked when returning
+}
