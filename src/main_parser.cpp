@@ -65,8 +65,8 @@ int yylex(SafeCParser::semantic_type *yylval, SafeCParser::location_type *yylloc
     case IDENTIFIER:
         yylval->str = new std::string(yytext);
         break;
-    case INT_LITERAL:      // base 0 handles 0x hex too
-        yylval->num = std::strtoull(yytext, nullptr, 0);
+    case INT_LITERAL:      // 0x is hex; anything else is decimal, even with a leading 0
+        yylval->num = std::strtoull(yytext, nullptr, (yytext[1] == 'x' || yytext[1] == 'X') ? 16 : 10);
         break;
     case FLOAT_LITERAL:    // strtod stops before the f/F suffix
         yylval->fnum = std::strtod(yytext, nullptr);

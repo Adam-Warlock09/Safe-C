@@ -1,6 +1,8 @@
 #include "codegen.h"
 #include <stdexcept>
 #include <cassert>
+#include <cstdio>
+#include <cstring>
 
 namespace safec {
 
@@ -58,6 +60,183 @@ int CodeGen::get_struct_field_index(const std::string& struct_name, const std::s
 }
 
 // -----------------------------------------------------------------------------
+// Arithmetic Helpers
+// -----------------------------------------------------------------------------
+
+// Converts between i1 (bool), i8 (char) and i32 (int) the way sema's IntegralCast means it
+std::string CodeGen::convert_int(const std::string& val, const std::string& from_t, const std::string& to_t) {
+    if (from_t == to_t) return val;
+    std::string res = new_temp();
+    if (to_t == "i1") {                 // any nonzero value is true
+        emit(res + " = icmp ne " + from_t + " " + val + ", 0");
+    } else if (from_t == "i1") {        // true is 1, not -1
+        emit(res + " = zext i1 " + val + " to " + to_t);
+    } else if (from_t == "i8") {        // char -> int keeps the sign
+        emit(res + " = sext i8 " + val + " to " + to_t);
+    } else {                            // int -> char drops the high bits
+        emit(res + " = trunc " + from_t + " " + val + " to " + to_t);
+    }
+    return res;
+}
+
+// One arithmetic, bitwise or comparison instruction on two values of type t
+std::string CodeGen::emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b) {
+    bool f = (t == "float");
+    std::string ins;
+    switch (op) {
+        case BinaryOp::Add:    ins = f ? "fadd" : "add nsw"; break;
+        case BinaryOp::Sub:    ins = f ? "fsub" : "sub nsw"; break;
+        case BinaryOp::Mul:    ins = f ? "fmul" : "mul nsw"; break;
+        case BinaryOp::Div:    ins = f ? "fdiv" : "sdiv"; break;
+        case BinaryOp::Mod:    ins = "srem"; break;
+        case BinaryOp::Shl:    ins = "shl"; break;
+        case BinaryOp::Shr:    ins = "ashr"; break;
+        case BinaryOp::BitAnd: ins = "and"; break;
+        case BinaryOp::BitOr:  ins = "or"; break;
+        case BinaryOp::BitXor: ins = "xor"; break;
+        case BinaryOp::Eq:     ins = f ? "fcmp oeq" : "icmp eq"; break;
+        case BinaryOp::Ne:     ins = f ? "fcmp une" : "icmp ne"; break;   // NaN != NaN is true, as in C
+        case BinaryOp::Lt:     ins = f ? "fcmp olt" : "icmp slt"; break;
+        case BinaryOp::Gt:     ins = f ? "fcmp ogt" : "icmp sgt"; break;
+        case BinaryOp::Le:     ins = f ? "fcmp ole" : "icmp sle"; break;
+        case BinaryOp::Ge:     ins = f ? "fcmp oge" : "icmp sge"; break;
+        default: throw std::runtime_error("emit_binop: && and || are generated as branches");
+    }
+    std::string res = new_temp();
+    emit(res + " = " + ins + " " + t + " " + a + ", " + b);
+    return res;
+}
+
+// x op= rhs, ++x, x++ ...: loads *ptr, applies op with rhs (sema has already converted
+// rhs to the target's type, or to int for raw pointer arithmetic), stores the result.
+// bool and char are computed as int and converted back, like the binary operators.
+// Returns {old value, new value}.
+std::pair<std::string, std::string> CodeGen::gen_update(const std::string& ptr, const Type* ty, BinaryOp op, const std::string& rhs) {
+    std::string t = llvm_type(ty);
+    std::string old_v = new_temp();
+    emit(old_v + " = load " + t + ", ptr " + ptr);
+
+    std::string new_v;
+    if (auto* pt = dyn_cast<PointerType>(ty)) {          // raw p += n, p -= n (trusted only)
+        std::string n = rhs;
+        if (op == BinaryOp::Sub) {
+            n = new_temp();
+            emit(n + " = sub i32 0, " + rhs);
+        }
+        new_v = new_temp();
+        emit(new_v + " = getelementptr " + llvm_type(pt->pointee()) + ", ptr " + old_v + ", i32 " + n);
+    } else if (t == "float") {
+        new_v = emit_binop(op, t, old_v, rhs);
+    } else {
+        std::string a = convert_int(old_v, t, "i32");
+        std::string b = convert_int(rhs, t, "i32");
+        new_v = convert_int(emit_binop(op, "i32", a, b), "i32", t);
+    }
+    emit("store " + t + " " + new_v + ", ptr " + ptr);
+    return {old_v, new_v};
+}
+
+// LLVM writes a float constant as the hex bits of the same value widened to double
+std::string CodeGen::float_const(double v) const {
+    double d = static_cast<float>(v);
+    uint64_t bits;
+    std::memcpy(&bits, &d, sizeof bits);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "0x%016llX", static_cast<unsigned long long>(bits));
+    return buf;
+}
+
+// -----------------------------------------------------------------------------
+// Constant Expressions (global initializers, case values)
+// Sema has already checked these are constant; the rules follow its evalConstInt,
+// and implicit casts convert the same way they do at run time.
+// -----------------------------------------------------------------------------
+
+// Value of an integer-typed (bool, char, int) constant, wrapped to its type
+int64_t CodeGen::const_int(const Expr* e) {
+    int64_t v = 0;
+    if (auto* il = dyn_cast<IntLiteral>(e)) v = static_cast<int64_t>(il->value);
+    else if (auto* cl = dyn_cast<CharLiteral>(e)) v = cl->value;
+    else if (auto* bl = dyn_cast<BoolLiteral>(e)) v = bl->value ? 1 : 0;
+    else if (auto* ic = dyn_cast<ImplicitCastExpr>(e)) {
+        auto* sb = dyn_cast<BuiltinType>(ic->sub->type);
+        bool from_float = sb && sb->builtinKind() == BuiltinKind::Float;
+        if (from_float) {
+            double f = const_float(ic->sub.get());
+            v = (llvm_type(ic->type) == "i1") ? (f != 0.0) : static_cast<int64_t>(f);
+        } else {
+            v = const_int(ic->sub.get());
+        }
+    } else if (auto* u = dyn_cast<UnaryExpr>(e)) {
+        int64_t x = const_int(u->operand.get());
+        switch (u->op) {
+            case UnaryOp::Plus:   v = x; break;
+            case UnaryOp::Minus:  v = -x; break;
+            case UnaryOp::BitNot: v = ~x; break;
+            case UnaryOp::Not:    v = !x; break;
+            default: throw std::runtime_error("const_int: not a constant unary operator");
+        }
+    } else if (auto* b = dyn_cast<BinaryExpr>(e)) {
+        int64_t l = const_int(b->lhs.get());
+        int64_t r = const_int(b->rhs.get());
+        switch (b->op) {
+            case BinaryOp::Add:    v = l + r; break;
+            case BinaryOp::Sub:    v = l - r; break;
+            case BinaryOp::Mul:    v = l * r; break;
+            case BinaryOp::Div:    v = r ? l / r : 0; break;   // sema rejects a zero divisor
+            case BinaryOp::Mod:    v = r ? l % r : 0; break;
+            case BinaryOp::BitAnd: v = l & r; break;
+            case BinaryOp::BitOr:  v = l | r; break;
+            case BinaryOp::BitXor: v = l ^ r; break;
+            case BinaryOp::Shl:    v = l << r; break;
+            case BinaryOp::Shr:    v = l >> r; break;
+            case BinaryOp::Lt:     v = l < r; break;
+            case BinaryOp::Gt:     v = l > r; break;
+            case BinaryOp::Le:     v = l <= r; break;
+            case BinaryOp::Ge:     v = l >= r; break;
+            case BinaryOp::Eq:     v = l == r; break;
+            case BinaryOp::Ne:     v = l != r; break;
+            case BinaryOp::LogAnd: v = l && r; break;
+            case BinaryOp::LogOr:  v = l || r; break;
+        }
+    } else {
+        throw std::runtime_error("const_int: not a constant expression");
+    }
+
+    std::string t = llvm_type(e->type);
+    if (t == "i1") return v != 0;
+    if (t == "i8") return static_cast<int8_t>(v);
+    return static_cast<int32_t>(v);
+}
+
+// Value of a float-typed constant
+double CodeGen::const_float(const Expr* e) {
+    if (auto* fl = dyn_cast<FloatLiteral>(e)) return static_cast<float>(fl->value);
+    if (auto* u = dyn_cast<UnaryExpr>(e)) {
+        double x = const_float(u->operand.get());
+        return u->op == UnaryOp::Minus ? -x : x;
+    }
+    if (auto* ic = dyn_cast<ImplicitCastExpr>(e)) {
+        if (ic->castKind == CastKind::IntToFloat) return static_cast<float>(const_int(ic->sub.get()));
+        return const_float(ic->sub.get());
+    }
+    return static_cast<double>(const_int(e));
+}
+
+// LLVM constant text for a global initializer of e's type
+std::string CodeGen::const_init(const Expr* e) {
+    std::string t = llvm_type(e->type);
+    if (t == "ptr") {
+        const Expr* inner = e;
+        while (auto* ic = dyn_cast<ImplicitCastExpr>(inner)) inner = ic->sub.get();
+        if (isa<StringLiteral>(inner)) return gen_expr(inner);   // only adds it to the string pool
+        return "null";
+    }
+    if (t == "float") return float_const(const_float(e));
+    return std::to_string(const_int(e));
+}
+
+// -----------------------------------------------------------------------------
 // Module Header Emission
 // -----------------------------------------------------------------------------
 void CodeGen::emit_module_header() {
@@ -78,6 +257,7 @@ void CodeGen::emit_module_header() {
 
     // 2. Emit Runtime Declarations
     out_ << "declare ptr @malloc(i64)\n";
+    out_ << "declare ptr @calloc(i64, i64)\n";
     out_ << "declare void @free(ptr)\n";
     out_ << "declare void @llvm.trap()\n";
     out_ << "declare i32 @printf(ptr, ...)\n\n";
@@ -87,7 +267,7 @@ void CodeGen::emit_module_header() {
         if (auto* vd = dyn_cast<VarDecl>(d.get())) {
             if (vd->isGlobal) {
                 std::string t = llvm_type(vd->type);
-                std::string init = llvm_zero_init(vd->type);
+                std::string init = vd->init ? const_init(vd->init.get()) : llvm_zero_init(vd->type);
                 out_ << "@" << vd->name << " = global " << t << " " << init << "\n";
             }
         }
@@ -100,7 +280,9 @@ void CodeGen::emit_module_header() {
 // -----------------------------------------------------------------------------
 std::string CodeGen::gen_lvalue(const Expr* e) {
     if (auto* v = dyn_cast<NameExpr>(e)) {
-        return lookup_var(v->name).llvm_ptr;
+        auto it = local_addr_.find(v->decl);
+        if (it != local_addr_.end()) return it->second;
+        return "@" + v->name;                 // a global
     }
     
     if (auto* u = dyn_cast<UnaryExpr>(e)) {
@@ -135,6 +317,14 @@ std::string CodeGen::gen_lvalue(const Expr* e) {
             std::string base_ptr = gen_lvalue(idx->base.get());
             uint64_t array_size = at->size().value_or(0);
             std::string elem_t = llvm_type(at->element());
+
+            // An unsized array parameter (int xs[]): the length isn't known here, so
+            // there is nothing to check against
+            if (!at->size().has_value()) {
+                std::string gep = new_temp();
+                emit(gep + " = getelementptr inbounds " + elem_t + ", ptr " + base_ptr + ", i32 " + idx_val);
+                return gep;
+            }
             
             if (trusted_depth_ == 0) {
                 std::string oob = new_temp();
@@ -172,14 +362,25 @@ std::string CodeGen::gen_expr(const Expr* e) {
     if (auto* bl = dyn_cast<BoolLiteral>(e)) return bl->value ? "1" : "0";
     if (auto* cl = dyn_cast<CharLiteral>(e)) return std::to_string(static_cast<int>(cl->value));
     if (dyn_cast<NullLiteral>(e)) return "null";
-    
+    if (auto* fl = dyn_cast<FloatLiteral>(e)) return float_const(fl->value);
+
     if (auto* sl = dyn_cast<StringLiteral>(e)) {
         std::string global_name = "@.str." + std::to_string(string_pool_.size());
         string_pool_.push_back({global_name, sl->value, sl->value.length() + 1});
         return global_name;
     }
 
-    if (dyn_cast<NameExpr>(e) || dyn_cast<MemberExpr>(e) || dyn_cast<IndexExpr>(e) || 
+    // A field of a struct value that isn't stored anywhere, e.g. make_pair().x
+    if (auto* m = dyn_cast<MemberExpr>(e); m && !m->isArrow && !m->base->isLValue()) {
+        std::string agg = gen_expr(m->base.get());
+        std::string struct_name = cast<StructType>(m->base->type)->decl()->name;
+        int fidx = m->field ? m->field->index : get_struct_field_index(struct_name, m->member);
+        std::string res = new_temp();
+        emit(res + " = extractvalue %struct." + struct_name + " " + agg + ", " + std::to_string(fidx));
+        return res;
+    }
+
+    if (dyn_cast<NameExpr>(e) || dyn_cast<MemberExpr>(e) || dyn_cast<IndexExpr>(e) ||
        (isa<UnaryExpr>(e) && cast<UnaryExpr>(e)->op == UnaryOp::Deref)) {
         
         std::string lval = gen_lvalue(e);
@@ -199,11 +400,28 @@ std::string CodeGen::gen_expr(const Expr* e) {
         if (u->op == UnaryOp::AddrOf || u->op == UnaryOp::AddrOfMut) {
             return gen_lvalue(u->operand.get());
         }
+        if (u->isIncDec()) {
+            std::string ptr = gen_lvalue(u->operand.get());
+            std::string one = llvm_type(u->type) == "float" ? "1.0" : "1";
+            bool inc = (u->op == UnaryOp::PreInc || u->op == UnaryOp::PostInc);
+            auto [old_v, new_v] = gen_update(ptr, u->type, inc ? BinaryOp::Add : BinaryOp::Sub, one);
+            bool pre = (u->op == UnaryOp::PreInc || u->op == UnaryOp::PreDec);
+            return pre ? new_v : old_v;
+        }
+
         std::string op_val = gen_expr(u->operand.get());
+        std::string t = llvm_type(u->type);
+        // Sema gives -c, +c and ~c on a char (and ~b on a bool) type int without a cast
+        if (u->op != UnaryOp::Not) op_val = convert_int(op_val, llvm_type(u->operand->type), t);
+
+        if (u->op == UnaryOp::Plus) return op_val;
         std::string res = new_temp();
-        if (u->op == UnaryOp::Minus) emit(res + " = sub nsw i32 0, " + op_val);
+        if (u->op == UnaryOp::Minus) {
+            if (t == "float") emit(res + " = fneg float " + op_val);
+            else              emit(res + " = sub nsw " + t + " 0, " + op_val);
+        }
         else if (u->op == UnaryOp::Not) emit(res + " = xor i1 " + op_val + ", true");
-        else if (u->op == UnaryOp::BitNot) emit(res + " = xor i32 " + op_val + ", -1");
+        else if (u->op == UnaryOp::BitNot) emit(res + " = xor " + t + " " + op_val + ", -1");
         return res;
     }
 
@@ -213,26 +431,46 @@ std::string CodeGen::gen_expr(const Expr* e) {
         
         std::string lhs = gen_expr(b->lhs.get());
         std::string rhs = gen_expr(b->rhs.get());
-        std::string res = new_temp();
-        std::string t = llvm_type(b->lhs->type);
-        
-        switch (b->op) {
-            case BinaryOp::Add: emit(res + " = add nsw " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Sub: emit(res + " = sub nsw " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Mul: emit(res + " = mul nsw " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Div: emit(res + " = sdiv " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Eq:  emit(res + " = icmp eq " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Ne:  emit(res + " = icmp ne " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Lt:  emit(res + " = icmp slt " + t + " " + lhs + ", " + rhs); break;
-            case BinaryOp::Gt:  emit(res + " = icmp sgt " + t + " " + lhs + ", " + rhs); break;
-            default: break;
+
+        // Raw pointer arithmetic (trusted only): p + n, n + p, p - n
+        if (auto* pt = dyn_cast<PointerType>(b->type)) {
+            bool ptr_left = isa<PointerType>(b->lhs->type);
+            std::string p = ptr_left ? lhs : rhs;
+            std::string n = ptr_left ? rhs : lhs;
+            if (b->op == BinaryOp::Sub) {
+                std::string neg = new_temp();
+                emit(neg + " = sub i32 0, " + n);
+                n = neg;
+            }
+            std::string res = new_temp();
+            emit(res + " = getelementptr " + llvm_type(pt->pointee()) + ", ptr " + p + ", i32 " + n);
+            return res;
         }
-        return res;
+
+        // Sema has converted both operands to one type (int, float, or the pointer type for == and !=)
+        return emit_binop(b->op, llvm_type(b->lhs->type), lhs, rhs);
     }
 
     if (auto* a = dyn_cast<AssignExpr>(e)) {
         std::string lhs_ptr = gen_lvalue(a->target.get());
         std::string rhs_val = gen_expr(a->value.get());
+        if (a->isCompound()) {
+            BinaryOp op = BinaryOp::Add;
+            switch (a->op) {
+                case AssignOp::Add: op = BinaryOp::Add; break;
+                case AssignOp::Sub: op = BinaryOp::Sub; break;
+                case AssignOp::Mul: op = BinaryOp::Mul; break;
+                case AssignOp::Div: op = BinaryOp::Div; break;
+                case AssignOp::Mod: op = BinaryOp::Mod; break;
+                case AssignOp::And: op = BinaryOp::BitAnd; break;
+                case AssignOp::Or:  op = BinaryOp::BitOr; break;
+                case AssignOp::Xor: op = BinaryOp::BitXor; break;
+                case AssignOp::Shl: op = BinaryOp::Shl; break;
+                case AssignOp::Shr: op = BinaryOp::Shr; break;
+                case AssignOp::Assign: break;
+            }
+            return gen_update(lhs_ptr, a->target->type, op, rhs_val).second;
+        }
         std::string t = llvm_type(a->value->type);
         emit("store " + t + " " + rhs_val + ", ptr " + lhs_ptr);
         return rhs_val;
@@ -245,8 +483,20 @@ std::string CodeGen::gen_expr(const Expr* e) {
         std::string sz = new_temp();
         emit(sz + " = ptrtoint ptr " + gep + " to i64");
         
+        // calloc: the memory starts zeroed, so own fields of a new struct are null
         std::string raw = new_temp();
-        emit(raw + " = call ptr @malloc(i64 " + sz + ")");
+        emit(raw + " = call ptr @calloc(i64 1, i64 " + sz + ")");
+
+        // new gives a non-null pointer: stop the program if memory ran out
+        std::string is_null = new_temp();
+        emit(is_null + " = icmp eq ptr " + raw + ", null");
+        std::string ok_lbl = new_label("new.ok");
+        std::string fail_lbl = new_label("new.fail");
+        emit_terminator("br i1 " + is_null + ", label %" + fail_lbl + ", label %" + ok_lbl);
+        emit_label(fail_lbl);
+        emit("call void @llvm.trap()");
+        emit_terminator("unreachable");
+        emit_label(ok_lbl);
         return raw;
     }
 
@@ -258,7 +508,8 @@ std::string CodeGen::gen_expr(const Expr* e) {
         std::string call_str = "call " + ret_t + " @" + fn_name + "(";
         for (size_t i = 0; i < c->args.size(); ++i) {
             std::string arg_val = gen_expr(c->args[i].get());
-            std::string arg_t = llvm_type(c->args[i]->type);
+            // arrays are passed as a pointer to their first element
+            std::string arg_t = isa<ArrayType>(c->args[i]->type) ? "ptr" : llvm_type(c->args[i]->type);
             call_str += arg_t + " " + arg_val;
             if (i + 1 < c->args.size()) call_str += ", ";
         }
@@ -276,7 +527,7 @@ std::string CodeGen::gen_expr(const Expr* e) {
 
     // --- Compound Literals (Structs & Arrays) ---
     if (auto* cl = dyn_cast<CompoundLiteralExpr>(e)) {
-        std::string current_val = "undef";
+        std::string current_val = "zeroinitializer";   // fields left out are zero
         std::string agg_t = llvm_type(cl->type);
         
         for (size_t i = 0; i < cl->inits.size(); ++i) {
@@ -301,20 +552,8 @@ std::string CodeGen::gen_expr(const Expr* e) {
         std::string res = new_temp();
 
         switch (ic->castKind) {
-            case CastKind::IntegralCast: {
-                // i1 (bool), i8 (char), i32 (int)
-                if (from_t == to_t) return val;
-                if (to_t == "i1") {                 // any nonzero value is true
-                    emit(res + " = icmp ne " + from_t + " " + val + ", 0");
-                } else if (from_t == "i1") {        // true is 1, not -1
-                    emit(res + " = zext i1 " + val + " to " + to_t);
-                } else if (from_t == "i8") {        // char -> int keeps the sign
-                    emit(res + " = sext i8 " + val + " to " + to_t);
-                } else {                            // int -> char drops the high bits
-                    emit(res + " = trunc " + from_t + " " + val + " to " + to_t);
-                }
-                return res;
-            }
+            case CastKind::IntegralCast:
+                return convert_int(val, from_t, to_t);
             case CastKind::IntToFloat:
                 emit(res + (from_t == "i1" ? " = uitofp " : " = sitofp ") + from_t + " " + val + " to float");
                 return res;
@@ -344,44 +583,40 @@ std::string CodeGen::gen_expr(const Expr* e) {
 // -----------------------------------------------------------------------------
 std::string CodeGen::gen_short_circuit_and(const BinaryExpr* b) {
     std::string lhs_val = gen_expr(b->lhs.get());
+    std::string lhs_end = current_block_;          // the lhs may have opened new blocks
     std::string rhs_lbl = new_label("and.rhs");
     std::string end_lbl = new_label("and.end");
-    std::string res_ptr = new_temp();
-    
-    emit(res_ptr + " = alloca i1");
-    emit("store i1 " + lhs_val + ", ptr " + res_ptr);
     emit_terminator("br i1 " + lhs_val + ", label %" + rhs_lbl + ", label %" + end_lbl);
-    
+
     emit_label(rhs_lbl);
     std::string rhs_val = gen_expr(b->rhs.get());
-    emit("store i1 " + rhs_val + ", ptr " + res_ptr);
+    std::string rhs_end = current_block_;
     emit_terminator("br label %" + end_lbl);
-    
+
+    // false if we came straight from the lhs, otherwise whatever the rhs gave
     emit_label(end_lbl);
-    std::string final_val = new_temp();
-    emit(final_val + " = load i1, ptr " + res_ptr);
-    return final_val;
+    std::string res = new_temp();
+    emit(res + " = phi i1 [ false, %" + lhs_end + " ], [ " + rhs_val + ", %" + rhs_end + " ]");
+    return res;
 }
 
 std::string CodeGen::gen_short_circuit_or(const BinaryExpr* b) {
     std::string lhs_val = gen_expr(b->lhs.get());
+    std::string lhs_end = current_block_;
     std::string rhs_lbl = new_label("or.rhs");
     std::string end_lbl = new_label("or.end");
-    std::string res_ptr = new_temp();
-    
-    emit(res_ptr + " = alloca i1");
-    emit("store i1 " + lhs_val + ", ptr " + res_ptr);
     emit_terminator("br i1 " + lhs_val + ", label %" + end_lbl + ", label %" + rhs_lbl);
-    
+
     emit_label(rhs_lbl);
     std::string rhs_val = gen_expr(b->rhs.get());
-    emit("store i1 " + rhs_val + ", ptr " + res_ptr);
+    std::string rhs_end = current_block_;
     emit_terminator("br label %" + end_lbl);
-    
+
+    // true if we came straight from the lhs, otherwise whatever the rhs gave
     emit_label(end_lbl);
-    std::string final_val = new_temp();
-    emit(final_val + " = load i1, ptr " + res_ptr);
-    return final_val;
+    std::string res = new_temp();
+    emit(res + " = phi i1 [ true, %" + lhs_end + " ], [ " + rhs_val + ", %" + rhs_end + " ]");
+    return res;
 }
 
 } // namespace safec

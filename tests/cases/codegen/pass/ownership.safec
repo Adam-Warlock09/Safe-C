@@ -1,0 +1,116 @@
+// Ownership patterns from the borrow-checker tests, run for real.
+// Each helper frees everything it allocates and returns a value to check.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Leaf {
+    int v;
+};
+
+struct Box {
+    int v;
+    own struct Leaf*? child;
+};
+
+struct Pair {
+    int a;
+    int b;
+};
+
+// a move hands the allocation to another variable
+int move_then_use() {
+    own int* a = new int;
+    *a = 5;
+    own int* b = a;                             // a is moved, b owns it now
+    *b = *b + 1;
+    int v = *b;
+    free(b);
+    return v;
+}
+
+// a freed owner can be given a new allocation
+int reuse_after_free() {
+    own int* p = new int;
+    *p = 1;
+    free(p);
+    p = new int;
+    *p = 2;
+    int v = *p;
+    free(p);
+    return v;
+}
+
+// move a field out through a mut borrow, change it, put it back
+void bump_child(mut struct Box* b) {
+    own struct Leaf*? c = b->child;
+    b->child = null;
+    if (c != null) c->v = c->v + 10;
+    b->child = c;                               // restored before b goes away
+}
+
+int swap_through_mut() {
+    own struct Box* outer = new struct Box;
+    own struct Leaf* inner = new struct Leaf;
+    inner->v = 1;
+    outer->child = inner;
+    bump_child(outer);
+    int v = 0;
+    own struct Leaf*? c = outer->child;
+    outer->child = null;
+    if (c != null) {
+        v = c->v;
+        free(c);
+    }
+    free(outer);
+    return v;
+}
+
+// trusted code still runs normally
+int in_trusted() {
+    int x = 1;
+    trusted {
+        x = x + 1;
+    }
+    return x;
+}
+
+// a mut borrow of one field leaves the other field usable
+int disjoint_fields() {
+    struct Pair s = (struct Pair){ 0, 0 };
+    {
+        mut int* pa = &mut s.a;
+        s.b = 2;                                // fine: pa only borrows s.a
+        *pa = 1;
+    }                                           // the borrow ends here
+    return s.a * 10 + s.b;
+}
+
+// a borrow parameter can be pointed at a local
+int repoint(int* p) {
+    int local = 9;
+    p = &local;
+    return *p;
+}
+
+// the usual use of defer: free on every way out
+int defer_free(int early) {
+    own int* p = new int;
+    defer free(p);
+    *p = 4;
+    if (early) return *p;
+    *p = *p * 2;
+    return *p;
+}
+
+int main() {
+    if (move_then_use() != 6) return 1;
+    if (reuse_after_free() != 2) return 2;
+    if (swap_through_mut() != 11) return 3;
+    if (in_trusted() != 2) return 4;
+    if (disjoint_fields() != 12) return 5;
+    int outside = 3;
+    if (repoint(&outside) != 9) return 6;
+    if (outside != 3) return 7;                 // repointing p doesn't touch the caller's variable
+    if (defer_free(1) != 4) return 8;
+    if (defer_free(0) != 8) return 9;
+    return 0;
+}

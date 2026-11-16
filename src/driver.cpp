@@ -68,7 +68,7 @@ int yylex(SafeCParser::semantic_type *yylval, SafeCParser::location_type *yylloc
 
     switch (tok) {
     case IDENTIFIER:    yylval->str  = new std::string(yytext); break;
-    case INT_LITERAL:   yylval->num  = std::strtoull(yytext, nullptr, 0); break;
+    case INT_LITERAL:   yylval->num  = std::strtoull(yytext, nullptr, (yytext[1] == 'x' || yytext[1] == 'X') ? 16 : 10); break;
     case FLOAT_LITERAL: yylval->fnum = std::strtod(yytext, nullptr); break;
     case BOOL_LITERAL:  yylval->bval = (yytext[0] == 't'); break;
     case CHAR_LITERAL: {
@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
     
     if (link_status != 0) {
         std::fprintf(stderr, "Linker Error: clang backend failed to compile the generated LLVM IR.\n");
-        return link_status;
+        return 1;
     }
 
     std::printf("OK: Successfully compiled %s -> %s\n", file, output_bin.c_str());

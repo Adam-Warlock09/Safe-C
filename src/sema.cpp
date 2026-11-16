@@ -921,9 +921,10 @@ namespace safec {
 					checkStmt(s.get(), prog);
 				}
 
-				// Simple fall-off check : Warning if non-void function doesn't end with a return statement
+				// Fall-off check: warn if the end of a non-void function can be reached. `reachable`
+				// is false after a return on every path (if/else, switch with default, while (1))
 				if (retType != prog.types.voidType()) {
-					if (fd->body->body.empty() || !isa<ReturnStmt>(fd->body->body.back().get())) {
+					if (init.reachable) {
 						diag.warning(fd->loc, "Non-void function may exit without returning a value");
 					}
 				}
