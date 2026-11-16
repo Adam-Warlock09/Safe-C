@@ -1,0 +1,14 @@
+// no borrowing a struct while one of its own fields is moved out
+struct Box { own int*? v; };
+
+int main() {
+    struct Box a = (struct Box){ null };
+    a.v = new int;
+    own int*? t = a.v;
+    {
+        struct Box* r = &a;         // error: cannot borrow 'a' while 'a.v' is moved out
+    }
+    a.v = t;
+    if (a.v != null) free(a.v);
+    return 0;
+}

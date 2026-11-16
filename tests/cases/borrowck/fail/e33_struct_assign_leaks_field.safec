@@ -1,0 +1,9 @@
+// assigning a whole struct drops the own fields it overwrites
+struct Box { own int*? v; };
+
+int main() {
+    struct Box a = (struct Box){ null };
+    a.v = new int;
+    a = (struct Box){ null };       // error: assignment to 'a' leaks the value owned by 'a.v'
+    return 0;
+}

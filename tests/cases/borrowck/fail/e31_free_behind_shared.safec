@@ -1,0 +1,6 @@
+// a read borrow can't give away what it points to: no free through it
+struct Box { own int*? v; };
+
+void drop_inner(struct Box* b) {
+    if (b->v != null) free(b->v);   // error: cannot free 'b->v', which is behind a shared borrow
+}

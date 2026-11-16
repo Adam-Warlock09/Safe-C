@@ -58,5 +58,27 @@ int main() {
     float h = -g;
     if (h != -2.5) return 32;
     if (+d != 65) return 33;
+
+    // x op= e is x = x op e: e is not converted to x's type first
+    bool b2 = true;
+    b2 -= -3;                                   // 1 + 3 is nonzero: still true
+    if (!b2) return 34;
+    b2 &= 254;                                  // 1 & 254 is 0: false
+    if (b2) return 35;
+    char c2 = 100;
+    c2 /= 300;                                  // 100 / 300, not 100 / (char)300
+    if (c2 != 0) return 36;
+    int i2 = 3;
+    i2 *= 1.5;                                  // 4.5 -> 4, not 3 * 1
+    if (i2 != 4) return 37;
+    float f2 = 1.0;
+    f2 += 1;
+    if (f2 != 2.0) return 38;
+
+    bool t = true;
+    int minus_true = -t;                        // bool promotes to int: -1, not "-true" as a bool
+    if (minus_true != -1) return 39;
+    if (+t != 1) return 40;
+    if (-(t && t) + 5 != 4) return 41;
     return 0;
 }
