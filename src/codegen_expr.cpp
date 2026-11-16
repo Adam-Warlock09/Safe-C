@@ -530,30 +530,7 @@ std::string CodeGen::gen_expr(const Expr* e) {
         return raw;
     }
 
-    if (auto* c = dyn_cast<CallExpr>(e)) {
-        std::string ret_t = llvm_type(c->type);
-        std::string fn_name;
-        if (auto* ne = dyn_cast<NameExpr>(c->callee.get())) fn_name = ne->name;
-        
-        std::string call_str = "call " + ret_t + " @" + fn_name + "(";
-        for (size_t i = 0; i < c->args.size(); ++i) {
-            std::string arg_val = gen_expr(c->args[i].get());
-            // arrays are passed as a pointer to their first element
-            std::string arg_t = isa<ArrayType>(c->args[i]->type) ? "ptr" : llvm_type(c->args[i]->type);
-            call_str += arg_t + " " + arg_val;
-            if (i + 1 < c->args.size()) call_str += ", ";
-        }
-        call_str += ")";
-        
-        if (ret_t == "void") {
-            emit(call_str);
-            return "";
-        } else {
-            std::string res = new_temp();
-            emit(res + " = " + call_str);
-            return res;
-        }
-    }
+    if (auto* c = dyn_cast<CallExpr>(e)) return gen_call(c);   // codegen_abi.cpp
 
     // --- Compound Literals (Structs & Arrays) ---
     if (auto* cl = dyn_cast<CompoundLiteralExpr>(e)) {

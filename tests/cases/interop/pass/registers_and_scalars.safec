@@ -1,0 +1,36 @@
+// Arguments after the argument registers run out, and char/bool extension.
+// x86-64 passes the first 6 integer-class and 8 float arguments in registers.
+// A struct goes in registers only as a whole; otherwise it is passed on the
+// stack. A struct returned in memory takes the first integer register.
+// The C side is registers_and_scalars.c.
+
+struct Pair { int a; int b; };                    // 1 integer register
+struct Quad { int a; int b; int c; int d; };      // 2 integer registers
+struct Vec2 { float x; float y; };                // 1 float register
+struct Big  { int a; int b; int c; int d; int e; };   // memory (returned via sret)
+
+// 5 registers used, Quad needs 2: Quad goes on the stack, n after it still fits
+int quad_after_five(int a, int b, int c, int d, int e, struct Quad q, int n) {
+    return a + b + c + d + e + q.a * 10 + q.b * 100 + q.c * 1000 + q.d * 10000 + n * 100000;
+}
+
+// all 6 used: Pair (8 bytes) goes on the stack as a plain integer
+int pair_after_six(int a, int b, int c, int d, int e, int f, struct Pair p) {
+    return a + b + c + d + e + f + p.a * 100 + p.b * 1000;
+}
+
+// all 8 float registers used: Vec2 goes on the stack; i still uses a register
+float vec_after_eight(float a, float b, float c, float d, float e, float f, float g, float h,
+                      struct Vec2 v, int i) {
+    return a + b + c + d + e + f + g + h + v.x * 10.0 + v.y * 100.0 + i * 1000;
+}
+
+// the sret pointer takes a register: a..e fill the rest, Quad goes on the stack
+struct Big big_after_five(int a, int b, int c, int d, int e, struct Quad q) {
+    return (struct Big){ a + q.a, b + q.b, c + q.c, d + q.d, e };
+}
+
+// C's char is signed and bool is 0 or 1, in arguments and results
+char char_minus_one(char c) { return c - 1; }
+bool not(bool b) { return !b; }
+int char_plus_bool(char c, bool b) { return c + b; }

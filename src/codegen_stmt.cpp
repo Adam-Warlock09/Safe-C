@@ -63,29 +63,46 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     addr_uses_.clear();
 
     const Type* ret_type = fn.type ? cast<FunctionType>(fn.type)->returnType() : nullptr;
-    out_ << "\ndefine " << llvm_type(ret_type) << " @" << fn.name << "(";
-    
-    for (size_t i = 0; i < fn.params.size(); ++i) {
-        // arrays come in as a pointer to their first element
-        const Type* pt = fn.params[i]->type;
-        out_ << (isa<ArrayType>(pt) ? "ptr" : llvm_type(pt)) << " %" << fn.params[i]->name << ".arg";
-        if (i + 1 < fn.params.size()) out_ << ", ";
-    }
-    out_ << ") {\n";
+    current_abi_ = classify_signature(fn.functionType());
+
+    // Parameters arrive the way the C calling convention passes them
+    std::vector<std::string> arg_names;
+    for (const auto& p : fn.params) arg_names.push_back("%" + p->name + ".arg");
+    out_ << "\ndefine " << abi_return_type(current_abi_) << " @" << fn.name << "("
+         << abi_param_list(current_abi_, fn.functionType(), &arg_names) << ") {\n";
 
     emit_label("entry");
-    push_scope(); 
-    
-    for (const auto& p : fn.params) {
-        if (isa<ArrayType>(p->type)) {      // the incoming pointer already is the array's address
-            local_addr_[p.get()] = "%" + p->name + ".arg";
-            continue;
+    push_scope();
+
+    for (size_t i = 0; i < fn.params.size(); ++i) {
+        const ParamDecl* p = fn.params[i].get();
+        const AbiArg& a = current_abi_.params[i];
+        std::string arg = arg_names[i];
+        std::string addr;
+        if (isa<ArrayType>(p->type) || a.kind == AbiArg::Indirect) {
+            // already in memory: the array itself, or the callee's own byval copy
+            addr = arg;
+        } else if (a.kind == AbiArg::Coerce) {
+            // the struct's register-sized parts, stored back together. The slot
+            // has the coerced type, which is at least as big as the struct
+            addr = new_addr(p->name);
+            emit(addr + " = alloca " + a.ir_type + ", align 8");
+            for (size_t j = 0; j < a.parts.size(); ++j) {
+                std::string part_addr = addr;
+                if (a.parts.size() > 1) {
+                    part_addr = new_temp();
+                    emit(part_addr + " = getelementptr inbounds " + a.ir_type + ", ptr " + addr + ", i32 0, i32 " + std::to_string(j));
+                }
+                emit("store " + a.parts[j] + " " + arg + "." + std::to_string(j) + ", ptr " + part_addr);
+            }
+        } else {
+            addr = new_addr(p->name);
+            emit(addr + " = alloca " + llvm_type(p->type));
+            if (a.kind == AbiArg::Direct)            // an empty struct (Ignore) has nothing to store
+                emit("store " + llvm_type(p->type) + " " + arg + ", ptr " + addr);
         }
-        std::string addr = new_addr(p->name);
-        emit(addr + " = alloca " + llvm_type(p->type));
-        emit("store " + llvm_type(p->type) + " %" + p->name + ".arg, ptr " + addr);
         scopes_.back().vars[p->name] = {addr, p->type};
-        local_addr_[p.get()] = addr;
+        local_addr_[p] = addr;
     }
 
     emit_entry_allocas(fn.body.get());
@@ -100,10 +117,8 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     gen_compound_stmt(fn.body.get(), false); 
     pop_scope_and_emit_defers();    // falling off the end runs the function-level defers
     
-    if (!block_terminated_) {
-        std::string ret_t = llvm_type(ret_type);
-        if (ret_t == "void") emit_terminator("ret void");
-        else emit_terminator("ret " + ret_t + " " + llvm_zero_init(ret_type));
+    if (!block_terminated_) {      // falling off the end returns zero (and void returns nothing)
+        emit_return(llvm_type(ret_type) == "void" ? "" : llvm_zero_init(ret_type));
     }
 
     out_ << entry_ir << temp_allocas_.str() << "  br label %body\n"
@@ -192,11 +207,8 @@ void CodeGen::gen_stmt(const Stmt* s) {
         std::string ret_val = "";
         if (rs->value) ret_val = gen_expr(rs->value.get()); 
         
-        emit_defers_for_return(); 
-        
-        const Type* ret_type = current_fn_->type ? cast<FunctionType>(current_fn_->type)->returnType() : nullptr;
-        if (rs->value) emit_terminator("ret " + llvm_type(ret_type) + " " + ret_val);
-        else emit_terminator("ret void");
+        emit_defers_for_return();
+        emit_return(ret_val);
     } else if (auto* is = dyn_cast<IfStmt>(s)) {
         std::string cond = gen_expr(is->cond.get());
         std::string lbl_then = new_label("if.then");

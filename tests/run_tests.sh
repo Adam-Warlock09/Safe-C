@@ -2,7 +2,7 @@
 #
 # tests/run_tests.sh - the one test runner for the SafeC compiler.
 #
-#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec | --driver] [--only] [--verbose]
+#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec | --interop | --driver] [--only] [--verbose]
 #
 #   --lexer, --parser, ...  run every stage up to and including that one
 #                           (no stage flag means --driver, which runs everything)
@@ -35,6 +35,9 @@
 #            The exit code must match "// expect-exit: N" in the file (0 if
 #            there's no such line). The programs return the number of the
 #            first check that fails, so exit code 3 means check 3 failed.
+#   interop  C and SafeC together: pass/NAME.safec is built with safec -c and
+#            linked with pass/NAME.c, which has main. The program's exit code
+#            must match "// expect-exit: N" in the .c file (0 if none).
 #   driver   the command line: tests/cases/driver/pass/NAME.sh, run with bash
 #            in an empty temp folder with $SAFEC set to the compiler. Passes
 #            if the script exits 0; what it printed is shown when it fails.
@@ -55,7 +58,7 @@ ROOT=$(pwd)
 COMPILER="./safec"
 CASES="tests/cases"
 KNOWN="tests/known_bugs.txt"
-STAGES="lexer parser sema borrowck codegen safec driver"
+STAGES="lexer parser sema borrowck codegen safec interop driver"
 RUN_TIMEOUT=10   # seconds a compiled test program may run
 
 # the folder a stage's tests live in: safec runs the codegen programs
@@ -85,7 +88,7 @@ only=0
 verbose=0
 for arg in "$@"; do
     case "$arg" in
-        --lexer|--parser|--sema|--codegen|--safec|--driver) target="${arg#--}" ;;
+        --lexer|--parser|--sema|--codegen|--safec|--interop|--driver) target="${arg#--}" ;;
         --only)    only=1 ;;
         -v|--verbose) verbose=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -266,9 +269,14 @@ case_safec() {   # $1 = pass|fail, $2 = file
         { echo "could not build the program (exit $RC):"; cat "$TMP/out" "$TMP/err" | grep -iE 'error|warning' | head -5; } > "$TMP/why"
         return 1
     fi
+    run_built_program "$2"
+}
 
+# Runs $TMP/prog and checks its exit code against "// expect-exit: N" in the
+# file (0 if there's no such line).
+run_built_program() {   # $1 = the test file with the expect-exit marker
     local want
-    want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$2" | head -1)
+    want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$1" | head -1)
     want=${want:-0}
 
     if command -v timeout > /dev/null; then
@@ -295,6 +303,33 @@ case_safec() {   # $1 = pass|fail, $2 = file
         return 1
     fi
     return 0
+}
+
+# A SafeC file compiled with safec -c, linked with the C file of the same
+# name (which has main) and run: checks SafeC follows the C calling convention.
+case_interop() {   # $1 = pass, $2 = .safec file
+    local c_file="${2%.safec}.c"
+    if [ ! -f "$c_file" ]; then
+        echo "missing $c_file: an interop test is a .safec and a .c file" > "$TMP/why"
+        return 1
+    fi
+    cp "$2" "$TMP/lib.safec"
+    rm -f "$TMP/lib.o" "$TMP/prog"
+    "$COMPILER" -c "$TMP/lib.safec" -o "$TMP/lib.o" > "$TMP/out" 2> "$TMP/err"
+    RC=$?
+    if [ $RC -ge 128 ]; then
+        { echo "compiler crashed (exit $RC)"; tail -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    if [ $RC -ne 0 ]; then
+        { echo "safec -c failed (exit $RC):"; grep -iE 'error|warning' "$TMP/out" "$TMP/err" | head -5; } > "$TMP/why"
+        return 1
+    fi
+    if ! clang "$c_file" "$TMP/lib.o" -o "$TMP/prog" > "$TMP/out" 2> "$TMP/err"; then
+        { echo "could not link the C program with the SafeC object:"; head -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    run_built_program "$c_file"
 }
 
 # Driver tests are shell scripts that run the compiler with different command

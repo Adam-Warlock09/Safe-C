@@ -1,0 +1,68 @@
+// SafeC calling SafeC with structs passed the C way: in registers (as 1 or 2
+// coerced parts), on the stack (byval) or returned through memory (sret).
+// The definitions are checked against C in tests/cases/interop; this checks
+// that calls agree with them.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct IntCharBool { int x; char c; bool b; };       // 1 integer chunk
+struct ThreeInts   { int a; int b; int c; };         // 2 chunks: i64, i32
+struct TwoFloats   { float x; float y; };            // 1 float chunk
+struct ThreeFloats { float a; float b; float c; };   // 2 float chunks
+struct IntFloats   { int a; float b; float c; };     // integer chunk, then float chunk
+struct Big         { int a; int b; int c; int d; int e; };   // memory
+struct Empty       { };                               // not passed at all
+
+struct IntCharBool bump_icb(struct IntCharBool v) { v.x = v.x + 1; v.c = v.c + 1; v.b = !v.b; return v; }
+struct ThreeInts   bump_i3(struct ThreeInts v)    { v.a = v.a + 1; v.b = v.b + 1; v.c = v.c + 1; return v; }
+struct TwoFloats   bump_f2(struct TwoFloats v)    { v.x = v.x + 1.0; v.y = v.y + 1.0; return v; }
+struct ThreeFloats bump_f3(struct ThreeFloats v)  { v.a = v.a + 1.0; v.b = v.b + 1.0; v.c = v.c + 1.0; return v; }
+struct IntFloats   bump_iff(struct IntFloats v)   { v.a = v.a + 1; v.b = v.b + 1.0; v.c = v.c + 1.0; return v; }
+struct Big         bump_big(struct Big v)         { v.a = v.a + 1; v.e = v.e + 1; return v; }
+int after_empty(struct Empty e, int n) { return n + 1; }
+struct Empty make_empty() { struct Empty e; return e; }
+
+// registers run out: the struct moves to the stack, the int after it doesn't
+int i3_after_five(int a, int b, int c, int d, int e, struct ThreeInts q, int n) {
+    return a + b + c + d + e + q.a * 10 + q.b * 100 + q.c * 1000 + n * 10000;
+}
+float f2_after_eight(float a, float b, float c, float d, float e, float f, float g, float h,
+                     struct TwoFloats v, int i) {
+    return a + b + c + d + e + f + g + h + v.x * 10.0 + v.y * 100.0 + i * 1000;
+}
+
+char char_minus_one(char c) { return c - 1; }
+bool flip(bool b) { return !b; }
+
+int main() {
+    struct IntCharBool icb = bump_icb((struct IntCharBool){ 40, 'a', true });
+    if (icb.x != 41 || icb.c != 'b' || icb.b) return 1;
+
+    struct ThreeInts i3 = bump_i3((struct ThreeInts){ 1, 2, 3 });
+    if (i3.a != 2 || i3.b != 3 || i3.c != 4) return 2;
+
+    struct TwoFloats f2 = bump_f2((struct TwoFloats){ 1.5, 2.5 });
+    if (f2.x != 2.5 || f2.y != 3.5) return 3;
+
+    struct ThreeFloats f3 = bump_f3((struct ThreeFloats){ 1.0, 2.0, 3.0 });
+    if (f3.a != 2.0 || f3.b != 3.0 || f3.c != 4.0) return 4;
+
+    struct IntFloats iff = bump_iff((struct IntFloats){ 7, 0.5, -0.5 });
+    if (iff.a != 8 || iff.b != 1.5 || iff.c != 0.5) return 5;
+
+    struct Big big = bump_big((struct Big){ 1, 2, 3, 4, 5 });
+    if (big.a != 2 || big.b != 2 || big.d != 4 || big.e != 6) return 6;
+
+    if (after_empty(make_empty(), 41) != 42) return 7;
+
+    if (i3_after_five(1, 2, 3, 4, 5, (struct ThreeInts){ 1, 2, 3 }, 4) != 43225) return 8;
+    if (f2_after_eight(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, (struct TwoFloats){ 2.0, 3.0 }, 4) != 4328.0) return 9;
+
+    if (char_minus_one('b') != 'a') return 10;
+    if (char_minus_one(-100) != -101) return 11;
+    if (flip(true) || !flip(false)) return 12;
+
+    // a struct result used directly, then passed straight on
+    if (bump_i3(bump_i3((struct ThreeInts){ 0, 0, 0 })).c != 2) return 13;
+    if (bump_big(bump_big((struct Big){ 0, 0, 0, 0, 0 })).e != 2) return 14;
+    return 0;
+}
