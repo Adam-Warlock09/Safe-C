@@ -1910,9 +1910,18 @@ namespace safec {
 			}
 		}
 
-		// 3. Perform implicit coercion from RHS value to LHS target type
+		// 3. Convert the RHS. Plain `=` converts it to the target's type. `x op= e` is
+		// `x = x op e` (compound ops follow the binary-operator rule): e converts to the
+		// type the operator works in, int or float, and codegen converts the result back
+		const Type* valueType = expr->target->type;
+		if (expr->isCompound()) {
+			auto* lB = dyn_cast<BuiltinType>(expr->target->type);
+			auto* rB = dyn_cast<BuiltinType>(expr->value->type);
+			bool isFloat = lB && rB && (lB->builtinKind() == BuiltinKind::Float || rB->builtinKind() == BuiltinKind::Float);
+			valueType = isFloat ? types.floatType() : types.intType();
+		}
 		if (!(expr->isCompound() && isTrusted && isa<PointerType>(expr->target->type))) {
-			if (!coerce(expr->value, expr->target->type)) {
+			if (!coerce(expr->value, valueType)) {
 				expr->setInvalid();
 				return;
 			}
@@ -2061,7 +2070,8 @@ namespace safec {
 					expr->setInvalid();
 					return;
 				}
-				expr->type = (bType->builtinKind() == BuiltinKind::Char) ? types.intType() : opType;
+				// char and bool promote to int, as for ~ and the binary operators: -true is -1
+				expr->type = (bType->builtinKind() == BuiltinKind::Char || bType->builtinKind() == BuiltinKind::Bool) ? types.intType() : opType;
 				expr->category = ValueCategory::RValue;
 				break;
 			}

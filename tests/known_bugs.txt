@@ -26,7 +26,7 @@
 # sema/fail/bug11_uninitialized_read               11  reading an unassigned variable is accepted
 # sema/fail/bug28_param_redeclared                 28  a local can redeclare a parameter in the body's top level
 # sema/fail/bug29_positional_after_designator      29  positional initializers after a designator restart at the first field
-
+sema/pass/narrow_in_and                         36  no narrowing inside && (p != null && p->v)
 # Codegen. A test can depend on several bugs; the number here is the one that
 # stops it today. When that bug is fixed, the test may stop on the next one:
 # update the number then.

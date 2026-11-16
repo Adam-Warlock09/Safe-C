@@ -37,3 +37,11 @@ void self_init() {
 int main(int argc) {                // error: main() must not take any arguments
     return 0;
 }
+
+int defined_twice() {
+    return 1;
+}
+
+int defined_twice() {               // error: duplicate global name: 'defined_twice' -- a second function, not a variable
+    return 2;
+}

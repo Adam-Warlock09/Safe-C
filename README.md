@@ -43,19 +43,117 @@ reports **zero conflicts**.  Its actions build the complete
 Syntactic checks only: duplicate struct names, unknown struct types,
 etc. are semantic-analysis matters (`docs/SEMA_CHECKLIST.md`).
 
-## One language change (vs the whitepaper)
+# Differences from the Whitepaper
 
-Struct types are always written with the `struct` keyword:
+This section explains where our implementation differs from the whitepaper and why. Each difference has a test to verify its behaviour.
 
+### 1. Struct types must use `struct`
+
+```c
+struct List list = list_new();  // Allowed
+List list = list_new();         // Not allowed
 ```
-struct List list = list_new();     // yes
-List list = list_new();            // no — syntax error
+
+We require the `struct` keyword because otherwise the parser cannot easily distinguish between a struct declaration and multiplication.
+
+For example, `List * p` could be a pointer declaration or a multiplication expression.
+
+Requiring `struct` keeps the grammar simple. Bison reports zero parsing conflicts.
+
+Test: `parser/fail/e05_unknown_type`
+
+### 2. Variables must be initialized before borrowing
+
+```c
+int x;
+list_pop(&mut list, &mut x);  // Error
+
+int x = 0;
+list_pop(&mut list, &mut x);  // Allowed
 ```
 
-Reason: bare `List` makes `List * p;` (declaration) and `a * b;`
-(multiplication) indistinguishable to any generated parser, since
-struct names are ordinary identifiers. Requiring `struct` makes the
-grammar LALR(1)-clean — bison reports **zero conflicts**.
+Even when passing a mutable borrow (`&mut`), the variable must already have a value.
+
+This is because the function receiving the pointer might read its value. Allowing uninitialized variables could therefore cause errors.
+
+Test: `sema/fail/definite_assignment`
+
+### 3. The borrow checker checks one function at a time
+
+```c
+list_free(&mut list);
+return 0;  // Error: list.head might still own memory
+```
+
+The borrow checker cannot know whether `list_free()` actually emptied the list because it doesn't inspect what happens inside called functions.
+
+Therefore, it assumes the list might still own memory.
+
+To avoid this, explicitly transfer ownership and free it:
+
+```c
+own struct Node*? chain = list.head;
+list.head = null;
+nodes_free(chain);
+```
+
+This follows the whitepaper's design of checking borrows locally.
+
+Tests:
+
+- `borrowck/fail/e35_leak_after_mut_call`
+- `codegen/pass/case_study_list`
+
+### 4. Owned struct fields must be nullable
+
+Owned pointer fields must use `own T*?`.
+
+This is because `new` uses `calloc`, which initializes allocated memory to zero.
+
+Therefore, owned pointer fields start as null and must allow null values.
+
+Tests: `codegen/pass/new_zero_fill` and borrow-checker tests.
+
+### 5. Evaluation happens from left to right
+
+The whitepaper doesn't specify evaluation order, so we define it ourselves.
+
+In SafeC:
+
+- Assignment targets are evaluated before their values.
+- Function arguments are evaluated from left to right.
+- Operators evaluate their operands from left to right.
+
+Test: `codegen/pass/evaluation_order`
+
+### 6. Borrows last until the statement finishes
+
+A borrow created inside a statement remains active until that entire statement finishes.
+
+For example:
+
+```c
+x = f(&x);  // Error
+```
+
+Here, `x` is borrowed while the assignment is trying to modify it.
+
+Use a separate variable instead.
+
+Test: `borrowck/fail/e36_borrow_lasts_whole_statement`
+
+### 7. Arithmetic follows C rules
+
+SafeC follows C's arithmetic behaviour:
+
+- `char` and `bool` are promoted to `int`.
+- `-true` evaluates to `-1`.
+- `x op= e` works like `x = x op e`. For example, `b -= -3` on a boolean keeps it true.
+- Array accesses are checked at runtime to prevent out-of-bounds access.
+- Unsized array parameters and code inside `trusted` are exceptions to runtime bounds checking.
+- Integer overflow is not checked at runtime.
+
+Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`.
 
 ## Grammar (EBNF)
 
@@ -306,3 +404,119 @@ and consumed by semantic analysis (`src/sema.cpp`).
 - **Open for sema to decide:** which pointer level a qualifier applies
   to in `own int** p`, and rejecting a qualifier with no pointer
   (`own int x`). `TypeSpec` records the source as written.
+
+# Testing
+
+### Running the tests
+
+```bash
+make test
+```
+
+Runs the complete test suite.
+
+Other options:
+
+```bash
+bash tests/run_tests.sh --sema
+```
+
+Runs all stages up to semantic analysis.
+
+```bash
+bash tests/run_tests.sh --sema --only
+```
+
+Runs only semantic analysis.
+
+```bash
+bash tests/run_tests.sh -v
+```
+
+Shows every test, including passing tests.
+
+### Test stages
+
+| Stage          | What it checks                                     |
+| -------------- | -------------------------------------------------- |
+| Lexer          | Whether the generated tokens are correct           |
+| Parser         | Whether the AST matches the expected output        |
+| Sema           | Whether semantic errors and warnings are correct   |
+| Borrow checker | Whether ownership and borrowing rules are followed |
+| Codegen        | Whether generated LLVM IR is valid                 |
+| SafeC          | Whether compiled programs execute correctly        |
+
+`--codegen` runs the code generation tests. `--safec` runs the complete suite.
+
+The test runner exits with code 0 if all tests pass.
+
+### Test folder structure
+
+Tests are stored in:
+
+```text
+tests/cases/<stage>/pass/
+tests/cases/<stage>/fail/
+```
+
+- `pass`: Programs that should be accepted.
+- `fail`: Programs that should be rejected.
+
+Codegen tests also check the program's output or return value. If a check fails, the program returns the number of the failed check.
+
+For example, `returned 5` means check number 5 failed.
+
+If a program is expected to exit with a non-zero value, use:
+
+```c
+// expect-exit: N
+```
+
+### Error markers
+
+Semantic analysis and borrow-checker tests use comments to specify expected errors and warnings.
+
+```c
+*p = 1;  // error: cannot assign through a read borrow
+free(q); // error: may be null
+```
+
+The test passes only if:
+
+- Every expected error or warning is reported.
+- The diagnostic appears on the correct line.
+- The message contains the expected text.
+- No unexpected errors or warnings are reported.
+
+---
+
+## Additional Testing
+
+Apart from the regular test suite, SafeC has been tested in four other ways.
+
+### 1. Crash Fuzzing
+
+Around 120,000 modified versions of existing tests were generated by deleting, swapping, or replacing tokens and moving lines.
+
+The compiler was built with AddressSanitizer and UBSan to detect memory errors and undefined behaviour.
+
+### 2. Mutation Testing
+
+We disabled each of the 118 error-reporting checks in semantic analysis and the borrow checker, one at a time.
+```
+All 118 are now covered: switching any one of them off makes at least one test fail.
+```
+
+### 3. Whitepaper Review
+
+We tested 76 small programs, each checking a particular rule from the whitepaper.
+
+All behaved as expected, except for the differences documented in the 'differences from Whitepaper' section.
+
+### 4. Differential Testing  - TO BE DONE STILL
+
+We generated random programs and compiled them both as SafeC and as C.
+
+We then compared their outputs to check whether they behaved identically.
+
+More than 7,000 programs have produced matching results.

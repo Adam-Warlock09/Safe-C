@@ -1,0 +1,13 @@
+// A borrow written inside a statement lasts until the end of that statement
+// (whitepaper 3.4.3), so x is still borrowed when the assignment happens.
+int read(int* p) {
+    return *p + 1;
+}
+
+int main() {
+    int x = 1;
+    x = read(&x);           // error: cannot assign to 'x' while it is borrowed
+    int y = read(&x);       // fine: x is not assigned in this statement
+    x = y;
+    return 0;
+}
