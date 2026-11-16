@@ -1,0 +1,28 @@
+// Fields and elements of struct values that aren't stored in a variable:
+// the result of a call is spilled to a temporary so it can be indexed.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Inner { int v[3]; };
+struct Outer { int a[2]; struct Inner in; };
+
+struct Outer make() {
+    struct Outer o;
+    o.a[0] = 1; o.a[1] = 2;
+    o.in.v[0] = 0; o.in.v[1] = 0; o.in.v[2] = 7;
+    return o;
+}
+
+int sum2(int xs[2]) { return xs[0] + xs[1]; }
+
+int main() {
+    if (make().a[1] != 2) return 1;          // array field of a call result
+    if (make().in.v[2] != 7) return 2;       // through a nested struct
+    if (sum2(make().a) != 3) return 3;       // passed on as an array argument
+    int total = 0;
+    for (int i = 0; i < 3; i++) {            // the temporary is reused every iteration
+        total += make().a[i % 2];
+    }
+    if (total != 4) return 4;
+    if (make().in.v[0] + make().a[0] != 1) return 5;   // two temporaries in one expression
+    return 0;
+}

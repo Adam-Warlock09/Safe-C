@@ -1,0 +1,57 @@
+// Whitepaper §3.3.2: move semantics. Assigning an own pointer to another own
+// variable, storing it into a struct field, or passing it to an own parameter
+// moves it: the destination becomes the owner. The rejected uses of a moved
+// pointer are in borrowck/fail/whitepaper_3_3_2_use_after_move.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Box {
+    own int*? data;
+};
+
+int freed = 0;
+
+// an own parameter: the caller's pointer moves in, and this function frees it
+void consume(own int* p) {
+    free(p);
+    freed = freed + 1;
+}
+
+int main() {
+    int bad = 0;
+
+    // The whitepaper's example
+    own int* a = new int;
+    *a = 42;
+    own int* b = a;           // Ownership moves from a to b; a is invalidated
+    // int v = *a;            // Compile-time error: use of moved pointer 'a'
+    if (*b != 42) bad = 1;
+    free(b);                  // Valid: b is the active owner
+
+    // Moving into a struct field, and back out
+    own int* c = new int;
+    *c = 7;
+    struct Box box = (struct Box){ .data = null };
+    box.data = c;             // c moves into the field
+    own int*? back = box.data;
+    box.data = null;
+    if (back != null) {
+        if (*back != 7) bad = 2;
+        free(back);
+    }
+
+    // Passing to an own parameter
+    own int* d = new int;
+    consume(d);               // d moves into consume, which frees it
+    if (freed != 1) bad = 3;
+
+    // A moved-from variable can be given a new owner and used again
+    own int* e = new int;
+    own int* f = e;
+    e = new int;
+    *e = 5;
+    *f = 6;
+    if (*e + *f != 11) bad = 4;
+    free(e);
+    free(f);
+    return bad;
+}

@@ -1,0 +1,11 @@
+// ++ past INT_MAX overflows: ++ and -- are checked like +.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int x = 2147483646;
+    x++;
+    x++;
+    return 0;
+}

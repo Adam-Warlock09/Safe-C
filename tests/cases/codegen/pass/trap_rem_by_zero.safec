@@ -1,0 +1,11 @@
+// Integer remainder by zero.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int ten = 10;
+    int zero = 0;
+    int r = ten % zero;
+    return 0;
+}

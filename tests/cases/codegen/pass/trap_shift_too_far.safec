@@ -1,0 +1,13 @@
+// Shifting an int by 32 or more is out of range.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int one = 1;
+    int n = 31;
+    int ok = one << n;
+    n = n + 1;
+    int bad = one << n;
+    return 0;
+}

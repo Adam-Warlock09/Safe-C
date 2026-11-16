@@ -3,9 +3,27 @@
 
 namespace safec {
 
+// new and free are calloc and free from the C library. A global with one of
+// the allocator's names would clash with those declarations, or replace the
+// C library's function at link time (C reserves these names too)
+bool CodeGen::check_reserved_names(const Program& prog, DiagnosticsEngine& diag) {
+    static const char* const reserved[] = {"malloc", "calloc", "realloc", "free"};
+    bool ok = true;
+    for (const auto& d : prog.decls) {
+        if (!isa<FunctionDecl>(d.get()) && !isa<VarDecl>(d.get())) continue;
+        for (const char* name : reserved) {
+            if (d->name == name) {
+                diag.error(d->loc, "'" + d->name + "' is reserved for the C library's allocator, which new and free use; choose another name");
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+
 void CodeGen::generate(const Program& prog) {
     prog_ = &prog;
-    
+
     emit_module_header();
 
     // Iterate over all declarations looking for Functions with bodies
@@ -14,6 +32,9 @@ void CodeGen::generate(const Program& prog) {
             if (fn->body) gen_function(*fn);
         }
     }
+
+    // Intrinsics the checked arithmetic used
+    for (const std::string& decl : used_intrinsics_) out_ << decl << "\n";
 
     // Emit the accumulated string pool at the end of the module
     // Inside c"..." only printable characters can appear as themselves; everything
@@ -45,45 +66,76 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     addr_uses_.clear();
 
     const Type* ret_type = fn.type ? cast<FunctionType>(fn.type)->returnType() : nullptr;
-    out_ << "\ndefine " << llvm_type(ret_type) << " @" << fn.name << "(";
-    
-    for (size_t i = 0; i < fn.params.size(); ++i) {
-        // arrays come in as a pointer to their first element
-        const Type* pt = fn.params[i]->type;
-        out_ << (isa<ArrayType>(pt) ? "ptr" : llvm_type(pt)) << " %" << fn.params[i]->name << ".arg";
-        if (i + 1 < fn.params.size()) out_ << ", ";
-    }
-    out_ << ") {\n";
+    current_abi_ = classify_signature(fn.functionType());
+
+    // Parameters arrive the way the C calling convention passes them
+    std::vector<std::string> arg_names;
+    for (const auto& p : fn.params) arg_names.push_back("%" + p->name + ".arg");
+    out_ << "\ndefine " << abi_return_type(current_abi_) << " @" << fn.name << "("
+         << abi_param_list(current_abi_, fn.functionType(), &arg_names) << ") {\n";
 
     emit_label("entry");
-    push_scope(); 
-    
-    for (const auto& p : fn.params) {
-        if (isa<ArrayType>(p->type)) {      // the incoming pointer already is the array's address
-            local_addr_[p.get()] = "%" + p->name + ".arg";
-            continue;
+    push_scope();
+
+    for (size_t i = 0; i < fn.params.size(); ++i) {
+        const ParamDecl* p = fn.params[i].get();
+        const AbiArg& a = current_abi_.params[i];
+        std::string arg = arg_names[i];
+        std::string addr;
+        if (isa<ArrayType>(p->type) || a.kind == AbiArg::Indirect) {
+            // already in memory: the array itself, or the callee's own byval copy
+            addr = arg;
+        } else if (a.kind == AbiArg::Coerce) {
+            // the struct's register-sized parts, stored back together. The slot
+            // has the coerced type, which is at least as big as the struct
+            addr = new_addr(p->name);
+            emit(addr + " = alloca " + a.ir_type + ", align 8");
+            for (size_t j = 0; j < a.parts.size(); ++j) {
+                std::string part_addr = addr;
+                if (a.parts.size() > 1) {
+                    part_addr = new_temp();
+                    emit(part_addr + " = getelementptr inbounds " + a.ir_type + ", ptr " + addr + ", i32 0, i32 " + std::to_string(j));
+                }
+                emit("store " + a.parts[j] + " " + arg + "." + std::to_string(j) + ", ptr " + part_addr);
+            }
+        } else {
+            addr = new_addr(p->name);
+            emit(addr + " = alloca " + llvm_type(p->type));
+            if (a.kind == AbiArg::Direct)            // an empty struct (Ignore) has nothing to store
+                emit("store " + llvm_type(p->type) + " " + arg + ", ptr " + addr);
         }
-        std::string addr = new_addr(p->name);
-        emit(addr + " = alloca " + llvm_type(p->type));
-        emit("store " + llvm_type(p->type) + " %" + p->name + ".arg, ptr " + addr);
         scopes_.back().vars[p->name] = {addr, p->type};
-        local_addr_[p.get()] = addr;
+        local_addr_[p] = addr;
     }
 
     emit_entry_allocas(fn.body.get());
-    emit("  br label %body\n");
+
+    // The entry block is written out last: allocas for temporaries the body
+    // creates (temp_alloca) are added to it while the body is generated
+    std::string entry_ir = body_ir_.str();
+    body_ir_.str("");
+    temp_allocas_.str("");
 
     emit_label("body");
     gen_compound_stmt(fn.body.get(), false); 
     pop_scope_and_emit_defers();    // falling off the end runs the function-level defers
     
-    if (!block_terminated_) {
-        std::string ret_t = llvm_type(ret_type);
-        if (ret_t == "void") emit_terminator("ret void");
-        else emit_terminator("ret " + ret_t + " " + llvm_zero_init(ret_type));
+    if (!block_terminated_) {      // falling off the end returns zero (and void returns nothing)
+        emit_return(llvm_type(ret_type) == "void" ? "" : llvm_zero_init(ret_type));
     }
 
-    out_ << body_ir_.str() << "}\n";
+    out_ << entry_ir << temp_allocas_.str() << "  br label %body\n"
+         << body_ir_.str() << "}\n";
+}
+
+// A stack slot of type t in the entry block, for a value that has no address
+// of its own (e.g. a struct returned by a call). In the entry block it is
+// allocated once per call, not once per loop iteration, and mem2reg can remove it
+std::string CodeGen::temp_alloca(const Type* t) {
+    // new_addr only makes %name.addr[.N], so %agg.tmp.N can't clash with a local
+    std::string addr = "%agg.tmp." + std::to_string(++temp_counter_);
+    temp_allocas_ << "  " << addr << " = alloca " << llvm_type(t) << "\n";
+    return addr;
 }
 
 // A fresh alloca name for a local: %x.addr, then %x.addr.1, %x.addr.2 ... for
@@ -158,11 +210,8 @@ void CodeGen::gen_stmt(const Stmt* s) {
         std::string ret_val = "";
         if (rs->value) ret_val = gen_expr(rs->value.get()); 
         
-        emit_defers_for_return(); 
-        
-        const Type* ret_type = current_fn_->type ? cast<FunctionType>(current_fn_->type)->returnType() : nullptr;
-        if (rs->value) emit_terminator("ret " + llvm_type(ret_type) + " " + ret_val);
-        else emit_terminator("ret void");
+        emit_defers_for_return();
+        emit_return(ret_val);
     } else if (auto* is = dyn_cast<IfStmt>(s)) {
         std::string cond = gen_expr(is->cond.get());
         std::string lbl_then = new_label("if.then");
@@ -176,12 +225,12 @@ void CodeGen::gen_stmt(const Stmt* s) {
         }
         
         emit_label(lbl_then);
-        gen_stmt(is->thenStmt.get());
+        gen_branch_stmt(is->thenStmt.get());
         emit("br label %" + lbl_end);
-        
+
         if (is->elseStmt) {
             emit_label(lbl_else);
-            gen_stmt(is->elseStmt.get());
+            gen_branch_stmt(is->elseStmt.get());
             emit("br label %" + lbl_end);
         }
         emit_label(lbl_end);
@@ -300,6 +349,19 @@ void CodeGen::gen_stmt(const Stmt* s) {
         pop_scope_and_emit_defers();
         emit_label(lbl_end);
     }
+}
+
+// The then/else branch of an if. A branch without braces still gets its own
+// scope, so `if (c) defer f();` only runs f when the branch was taken (in the
+// enclosing block's scope it would run on every path)
+void CodeGen::gen_branch_stmt(const Stmt* s) {
+    if (!s || isa<CompoundStmt>(s)) {   // a block already opens a scope
+        gen_stmt(s);
+        return;
+    }
+    push_scope();
+    gen_stmt(s);
+    pop_scope_and_emit_defers();
 }
 
 // --- Defer Engine Helpers ---

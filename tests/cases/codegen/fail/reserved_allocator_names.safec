@@ -1,0 +1,7 @@
+// new and free use the C library's calloc and free, so a function or global
+// with an allocator's name would clash with them.
+
+int calloc(int n) { return n; }   // error: 'calloc' is reserved
+int malloc;                       // error: 'malloc' is reserved
+
+int main() { return calloc(malloc); }

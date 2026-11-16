@@ -2,10 +2,10 @@
 #
 # tests/run_tests.sh - the one test runner for the SafeC compiler.
 #
-#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec] [--only] [--verbose]
+#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec | --interop | --driver] [--only] [--verbose]
 #
 #   --lexer, --parser, ...  run every stage up to and including that one
-#                           (no stage flag means --safec, which runs everything)
+#                           (no stage flag means --driver, which runs everything)
 #   --only                  run just the chosen stage
 #   --verbose, -v           list every test, not just the ones that fail
 #
@@ -28,11 +28,21 @@
 #              // error            any error on this line
 #            Case is ignored, and anything after " -- " is just a comment.
 #   codegen  safec --emit-llvm, then LLVM's verifier (opt -passes=verify) on
-#            the IR. Only pass tests: anything that passes sema must compile.
+#            the IR. pass: exit 0 and the IR verifies. fail: programs that
+#            pass sema but codegen must reject; nonzero exit, and the
+#            diagnostics match the markers, as in sema.
 #   safec    the same programs, built into an executable with safec and run.
 #            The exit code must match "// expect-exit: N" in the file (0 if
 #            there's no such line). The programs return the number of the
 #            first check that fails, so exit code 3 means check 3 failed.
+#            "// expect-trap": the program must be stopped by a runtime check
+#            (bounds, overflow, division by zero, ...) instead.
+#   interop  C and SafeC together: pass/NAME.safec is built with safec -c and
+#            linked with pass/NAME.c, which has main. The program's exit code
+#            must match "// expect-exit: N" in the .c file (0 if none).
+#   driver   the command line: tests/cases/driver/pass/NAME.sh, run with bash
+#            in an empty temp folder with $SAFEC set to the compiler. Passes
+#            if the script exits 0; what it printed is shown when it fails.
 # In every stage a compiler crash counts as a failure, even for a fail test.
 #
 # tests/known_bugs.txt lists tests that fail today because of a known bug.
@@ -46,10 +56,11 @@
 set -u
 
 cd "$(dirname "$0")/.." || exit 2          # run from the repo root
+ROOT=$(pwd)
 COMPILER="./safec"
 CASES="tests/cases"
 KNOWN="tests/known_bugs.txt"
-STAGES="lexer parser sema borrowck codegen safec"
+STAGES="lexer parser sema borrowck codegen safec interop driver"
 RUN_TIMEOUT=10   # seconds a compiled test program may run
 
 # the folder a stage's tests live in: safec runs the codegen programs
@@ -74,12 +85,12 @@ usage() {
 
 # ---- options
 
-target="safec"
+target="driver"
 only=0
 verbose=0
 for arg in "$@"; do
     case "$arg" in
-        --lexer|--parser|--sema|--codegen|--safec) target="${arg#--}" ;;
+        --lexer|--parser|--sema|--codegen|--safec|--interop|--driver) target="${arg#--}" ;;
         --only)    only=1 ;;
         -v|--verbose) verbose=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -228,24 +239,30 @@ case_sema() {   # $1 = pass|fail, $2 = file
 
 case_borrowck() { case_sema "$@"; }   # same command; the borrow checker runs at the end of sema
 
-# The compiler writes NAME.safec.ll next to the source, so codegen tests
+# The compiler writes NAME.ll next to the source, so codegen tests
 # compile a copy in the temp folder to keep tests/cases clean.
-case_codegen() {   # $1 = pass, $2 = file
+case_codegen() {   # $1 = pass|fail, $2 = file
     cp "$2" "$TMP/prog.safec"
     run_compiler --emit-llvm "$TMP/prog.safec" || return 1
+    if [ "$1" = fail ]; then
+        expect_reject || return 1
+        check_markers "$2"
+        return
+    fi
     expect_accept "$2" || return 1
     if ! command -v opt > /dev/null; then
         echo "'opt' not found: install LLVM to run the codegen tests" > "$TMP/why"
         return 1
     fi
-    if ! opt -passes=verify -disable-output "$TMP/prog.safec.ll" > "$TMP/verify" 2>&1; then
+    if ! opt -passes=verify -disable-output "$TMP/prog.ll" > "$TMP/verify" 2>&1; then
         { echo "the generated LLVM IR is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
         return 1
     fi
     return 0
 }
 
-case_safec() {   # $1 = pass, $2 = file
+case_safec() {   # $1 = pass|fail, $2 = file
+    [ "$1" = fail ] && { case_codegen fail "$2"; return; }   # rejected before anything is built
     cp "$2" "$TMP/prog.safec"
     rm -f "$TMP/prog"
     "$COMPILER" "$TMP/prog.safec" -o "$TMP/prog" > "$TMP/out" 2> "$TMP/err"
@@ -254,10 +271,17 @@ case_safec() {   # $1 = pass, $2 = file
         { echo "could not build the program (exit $RC):"; cat "$TMP/out" "$TMP/err" | grep -iE 'error|warning' | head -5; } > "$TMP/why"
         return 1
     fi
+    run_built_program "$2"
+}
 
-    local want
-    want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$2" | head -1)
+# Runs $TMP/prog and checks its exit code against "// expect-exit: N" in the
+# file (0 if there's no such line). "// expect-trap" means the program must
+# be stopped by a runtime check (llvm.trap: SIGILL on x86-64, SIGTRAP on arm64).
+run_built_program() {   # $1 = the test file with the expect-exit/expect-trap marker
+    local want trap=0
+    want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$1" | head -1)
     want=${want:-0}
+    grep -qE '^[[:space:]]*//[[:space:]]*expect-trap' "$1" && trap=1
 
     if command -v timeout > /dev/null; then
         timeout "$RUN_TIMEOUT" "$TMP/prog" > "$TMP/out" 2> "$TMP/err"
@@ -270,6 +294,11 @@ case_safec() {   # $1 = pass, $2 = file
         echo "the program didn't finish within ${RUN_TIMEOUT}s (infinite loop?)" > "$TMP/why"
         return 1
     fi
+    if [ $trap -eq 1 ]; then
+        [ $got -eq 132 ] || [ $got -eq 133 ] && return 0     # SIGILL, SIGTRAP
+        echo "the program should have been stopped by a runtime check, but exited with $got" > "$TMP/why"
+        return 1
+    fi
     if [ $got -ge 128 ]; then
         echo "the program crashed (exit $got, signal $((got - 128)))" > "$TMP/why"
         return 1
@@ -280,6 +309,47 @@ case_safec() {   # $1 = pass, $2 = file
         else
             echo "the program exited with $got, expected $want" > "$TMP/why"
         fi
+        return 1
+    fi
+    return 0
+}
+
+# A SafeC file compiled with safec -c, linked with the C file of the same
+# name (which has main) and run: checks SafeC follows the C calling convention.
+case_interop() {   # $1 = pass, $2 = .safec file
+    local c_file="${2%.safec}.c"
+    if [ ! -f "$c_file" ]; then
+        echo "missing $c_file: an interop test is a .safec and a .c file" > "$TMP/why"
+        return 1
+    fi
+    cp "$2" "$TMP/lib.safec"
+    rm -f "$TMP/lib.o" "$TMP/prog"
+    "$COMPILER" -c "$TMP/lib.safec" -o "$TMP/lib.o" > "$TMP/out" 2> "$TMP/err"
+    RC=$?
+    if [ $RC -ge 128 ]; then
+        { echo "compiler crashed (exit $RC)"; tail -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    if [ $RC -ne 0 ]; then
+        { echo "safec -c failed (exit $RC):"; grep -iE 'error|warning' "$TMP/out" "$TMP/err" | head -5; } > "$TMP/why"
+        return 1
+    fi
+    if ! clang "$c_file" "$TMP/lib.o" -o "$TMP/prog" > "$TMP/out" 2> "$TMP/err"; then
+        { echo "could not link the C program with the SafeC object:"; head -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    run_built_program "$c_file"
+}
+
+# Driver tests are shell scripts that run the compiler with different command
+# lines. Each runs in its own empty folder, so it can create files freely.
+case_driver() {   # $1 = pass, $2 = script
+    local work="$TMP/driver"
+    rm -rf "$work" && mkdir -p "$work"
+    local script
+    script="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+    if ! (cd "$work" && SAFEC="$ROOT/safec" bash "$script") > "$TMP/out" 2>&1; then
+        { echo "the script failed. Its output:"; tail -15 "$TMP/out"; } > "$TMP/why"
         return 1
     fi
     return 0
@@ -301,11 +371,13 @@ run_stage() {   # $1 = stage name
     fi
 
     local kind file name id bug
+    local ext=safec
+    [ "$stage" = driver ] && ext=sh     # driver tests are scripts
     for kind in pass fail; do
         [ -d "$dir/$kind" ] || continue
-        for file in "$dir/$kind"/*.safec; do
+        for file in "$dir/$kind"/*."$ext"; do
             [ -f "$file" ] || continue
-            name=$(basename "$file" .safec)
+            name=$(basename "$file" ."$ext")
             id="$stage/$kind/$name"
             bug=$(known_bug "$id")
             : > "$TMP/why"

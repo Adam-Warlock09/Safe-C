@@ -2,6 +2,7 @@
 #pragma once
 #include "new_ast.h"
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -12,6 +13,26 @@ namespace safec {
 struct CGVarInfo {
     std::string llvm_ptr; // e.g. "%x.addr" or "@g_var"
     const Type* type;     // CHANGED: Must be a pointer because Type is abstract
+};
+
+// How one parameter or the return value crosses a call under the C calling
+// convention (x86-64 System V); see codegen_abi.cpp
+struct AbiArg {
+    enum Kind {
+        Direct,     // as itself (scalars, array pointers), maybe with attr
+        Coerce,     // a small struct, as 1 or 2 register-sized parts
+        Indirect,   // a struct in memory: byval parameter or sret return
+        Ignore,     // an empty struct: not passed at all
+    } kind = Direct;
+    std::string ir_type;              // Direct: the type; Coerce: "i64" or "{ i64, i32 }"
+    std::vector<std::string> parts;   // Coerce: the type of each register-sized part
+    std::string attr;                 // Direct: "signext" (char), "zeroext" (bool) or ""
+    uint64_t align = 0;               // Indirect: alignment of the in-memory copy
+};
+
+struct AbiSignature {
+    AbiArg ret;
+    std::vector<AbiArg> params;
 };
 
 struct CGScopeFrame {
@@ -25,13 +46,17 @@ struct CGScopeFrame {
 class CodeGen {
 public:
     explicit CodeGen(std::ostream& out) : out_(out) {}
+    // Rejects programs sema accepts but codegen can't build; run before generate
+    static bool check_reserved_names(const Program& prog, DiagnosticsEngine& diag);
     void generate(const Program& tu);
 
 private:
     std::ostream& out_;
     std::ostringstream body_ir_;     // Buffers instructions for current function
+    std::ostringstream temp_allocas_; // Entry-block allocas for temporaries (temp_alloca)
     const Program* prog_ = nullptr;
     const FunctionDecl* current_fn_ = nullptr;
+    AbiSignature current_abi_;       // how the current function receives and returns values
 
     int temp_counter_ = 0;
     int label_counter_ = 0;
@@ -42,6 +67,7 @@ private:
     // String literals pooled during expression codegen -> emitted at module top
     struct StringConst { std::string global_name; std::string raw_bytes; size_t byte_len; };
     std::vector<StringConst> string_pool_;
+    std::set<std::string> used_intrinsics_;   // declare lines, emitted at module end
 
     // Struct name -> list of fields (for GEP field index lookup)
     std::unordered_map<std::string, const StructDecl*> struct_defs_;
@@ -90,6 +116,10 @@ private:
     std::string convert_int(const std::string& val, const std::string& from_t, const std::string& to_t);
     std::string convert_scalar(const std::string& val, const std::string& from_t, const std::string& to_t);
     std::string emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
+    void emit_trap_if(const std::string& cond, const std::string& what);
+    std::string emit_checked_arith(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
+    void emit_division_checks(const std::string& t, const std::string& a, const std::string& b);
+    void emit_shift_check(const std::string& t, const std::string& n);
     std::pair<std::string, std::string> gen_update(const std::string& ptr, const Type* ty, BinaryOp op,
                                                    const std::string& rhs, const std::string& op_t);
     std::string float_const(double v) const;
@@ -97,11 +127,29 @@ private:
     double const_float(const Expr* e);
     std::string const_init(const Expr* e);
     std::string new_addr(const std::string& name);
+    std::string temp_alloca(const Type* t);
 
     void gen_function(const FunctionDecl& fn);
     void emit_entry_allocas(const Stmt* s);
     void gen_stmt(const Stmt* s);
     void gen_compound_stmt(const CompoundStmt* cs, bool push_new_scope = true);
+    void gen_branch_stmt(const Stmt* s);
+
+    // --- C calling convention (codegen_abi.cpp) ---
+    struct ScalarSlotInfo { uint64_t offset; uint64_t size; bool is_float; bool is_pointer; };
+    void type_layout(const Type* t, uint64_t& size, uint64_t& align) const;
+    void collect_struct_scalars(const Type* t, uint64_t offset, std::vector<ScalarSlotInfo>& out) const;
+    AbiArg classify_scalar(const Type* t) const;
+    AbiArg classify_small_struct(const Type* t, uint64_t size, int& need_int, int& need_sse) const;
+    AbiSignature classify_signature(const FunctionType* ft) const;
+    std::string abi_return_type(const AbiSignature& sig) const;
+    std::string abi_param_list(const AbiSignature& sig, const FunctionType* ft,
+                               const std::vector<std::string>* names) const;
+    std::string temp_alloca_ir(const std::string& ir_type);
+    std::vector<std::string> split_for_abi(const AbiArg& a, const Type* t, const std::string& val);
+    std::string join_from_abi(const AbiArg& a, const std::vector<std::string>& pieces);
+    void emit_return(const std::string& val);
+    std::string gen_call(const CallExpr* c);
 
     void push_scope(bool is_loop_or_switch = false, std::string brk = "", std::string cont = "");
     void pop_scope_and_emit_defers();
