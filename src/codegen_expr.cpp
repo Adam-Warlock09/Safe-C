@@ -96,13 +96,24 @@ std::string CodeGen::convert_scalar(const std::string& val, const std::string& f
 }
 
 // One arithmetic, bitwise or comparison instruction on two values of type t
+// Integer arithmetic is checked at run time outside trusted: overflow of + - *,
+// division or remainder by zero (and INT_MIN / -1), and shifting by a negative
+// amount or by the bit width or more stop the program (llvm.trap), the same
+// way an out-of-bounds index does. Inside trusted nothing is checked and
+// overflow wraps around.
 std::string CodeGen::emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b) {
     bool f = (t == "float");
+    bool checked = !f && trusted_depth_ == 0;
+    if (checked && (op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul))
+        return emit_checked_arith(op, t, a, b);
+    if (checked && (op == BinaryOp::Div || op == BinaryOp::Mod)) emit_division_checks(t, a, b);
+    if (checked && (op == BinaryOp::Shl || op == BinaryOp::Shr)) emit_shift_check(t, b);
+
     std::string ins;
     switch (op) {
-        case BinaryOp::Add:    ins = f ? "fadd" : "add nsw"; break;
-        case BinaryOp::Sub:    ins = f ? "fsub" : "sub nsw"; break;
-        case BinaryOp::Mul:    ins = f ? "fmul" : "mul nsw"; break;
+        case BinaryOp::Add:    ins = f ? "fadd" : "add"; break;      // integers: only in trusted, wrapping
+        case BinaryOp::Sub:    ins = f ? "fsub" : "sub"; break;
+        case BinaryOp::Mul:    ins = f ? "fmul" : "mul"; break;
         case BinaryOp::Div:    ins = f ? "fdiv" : "sdiv"; break;
         case BinaryOp::Mod:    ins = "srem"; break;
         case BinaryOp::Shl:    ins = "shl"; break;
@@ -121,6 +132,61 @@ std::string CodeGen::emit_binop(BinaryOp op, const std::string& t, const std::st
     std::string res = new_temp();
     emit(res + " = " + ins + " " + t + " " + a + ", " + b);
     return res;
+}
+
+// Stops the program when cond (an i1) is true: a failed runtime safety check.
+// Code generated after it goes in a new block, where cond is known to be false
+void CodeGen::emit_trap_if(const std::string& cond, const std::string& what) {
+    std::string fail_lbl = new_label(what + ".fail");
+    std::string ok_lbl = new_label(what + ".ok");
+    emit_terminator("br i1 " + cond + ", label %" + fail_lbl + ", label %" + ok_lbl);
+    emit_label(fail_lbl);
+    emit("call void @llvm.trap()");
+    emit_terminator("unreachable");
+    emit_label(ok_lbl);
+}
+
+// a op b for + - * on integers, trapping if the result doesn't fit in t
+std::string CodeGen::emit_checked_arith(BinaryOp op, const std::string& t, const std::string& a, const std::string& b) {
+    std::string name = op == BinaryOp::Add ? "sadd" : op == BinaryOp::Sub ? "ssub" : "smul";
+    std::string fn = "@llvm." + name + ".with.overflow." + t;
+    std::string pair_t = "{ " + t + ", i1 }";
+    used_intrinsics_.insert("declare " + pair_t + " " + fn + "(" + t + ", " + t + ")");
+
+    std::string pair = new_temp();
+    emit(pair + " = call " + pair_t + " " + fn + "(" + t + " " + a + ", " + t + " " + b + ")");
+    std::string overflowed = new_temp();
+    emit(overflowed + " = extractvalue " + pair_t + " " + pair + ", 1");
+    emit_trap_if(overflowed, "overflow");
+    std::string res = new_temp();
+    emit(res + " = extractvalue " + pair_t + " " + pair + ", 0");
+    return res;
+}
+
+// Before a / b or a % b on integers: b must not be 0, and INT_MIN / -1 (whose
+// result doesn't fit) is an overflow. Both would crash the CPU's divide anyway
+void CodeGen::emit_division_checks(const std::string& t, const std::string& a, const std::string& b) {
+    std::string is_zero = new_temp();
+    emit(is_zero + " = icmp eq " + t + " " + b + ", 0");
+    emit_trap_if(is_zero, "div.zero");
+
+    int bits = std::stoi(t.substr(1));
+    std::string int_min = std::to_string(-(int64_t{1} << (bits - 1)));
+    std::string a_is_min = new_temp();
+    emit(a_is_min + " = icmp eq " + t + " " + a + ", " + int_min);
+    std::string b_is_minus_one = new_temp();
+    emit(b_is_minus_one + " = icmp eq " + t + " " + b + ", -1");
+    std::string both = new_temp();
+    emit(both + " = and i1 " + a_is_min + ", " + b_is_minus_one);
+    emit_trap_if(both, "div.overflow");
+}
+
+// Before a << n or a >> n: n must be in 0 .. bits-1. Unsigned >= also
+// catches negative n
+void CodeGen::emit_shift_check(const std::string& t, const std::string& n) {
+    std::string out_of_range = new_temp();
+    emit(out_of_range + " = icmp uge " + t + " " + n + ", " + t.substr(1));
+    emit_trap_if(out_of_range, "shift.range");
 }
 
 // x op= rhs, ++x, x++ ...: loads *ptr, computes `x op rhs` in op_t, the type sema converted
@@ -345,14 +411,7 @@ std::string CodeGen::gen_lvalue(const Expr* e) {
             if (trusted_depth_ == 0) {
                 std::string oob = new_temp();
                 emit(oob + " = icmp uge i32 " + idx_val + ", " + std::to_string(array_size));
-                std::string ok_lbl = new_label("bounds.ok");
-                std::string fail_lbl = new_label("bounds.fail");
-                
-                emit_terminator("br i1 " + oob + ", label %" + fail_lbl + ", label %" + ok_lbl);
-                emit_label(fail_lbl);
-                emit("call void @llvm.trap()");
-                emit_terminator("unreachable");
-                emit_label(ok_lbl);
+                emit_trap_if(oob, "bounds");
             }
             
             std::string gep = new_temp();
@@ -448,7 +507,8 @@ std::string CodeGen::gen_expr(const Expr* e) {
         std::string res = new_temp();
         if (u->op == UnaryOp::Minus) {
             if (t == "float") emit(res + " = fneg float " + op_val);
-            else              emit(res + " = sub nsw " + t + " 0, " + op_val);
+            else if (trusted_depth_ == 0) return emit_checked_arith(BinaryOp::Sub, t, "0", op_val);   // -INT_MIN overflows
+            else emit(res + " = sub " + t + " 0, " + op_val);
         }
         else if (u->op == UnaryOp::Not) emit(res + " = xor i1 " + op_val + ", true");
         else if (u->op == UnaryOp::BitNot) emit(res + " = xor " + t + " " + op_val + ", -1");
@@ -520,13 +580,7 @@ std::string CodeGen::gen_expr(const Expr* e) {
         // new gives a non-null pointer: stop the program if memory ran out
         std::string is_null = new_temp();
         emit(is_null + " = icmp eq ptr " + raw + ", null");
-        std::string ok_lbl = new_label("new.ok");
-        std::string fail_lbl = new_label("new.fail");
-        emit_terminator("br i1 " + is_null + ", label %" + fail_lbl + ", label %" + ok_lbl);
-        emit_label(fail_lbl);
-        emit("call void @llvm.trap()");
-        emit_terminator("unreachable");
-        emit_label(ok_lbl);
+        emit_trap_if(is_null, "new");
         return raw;
     }
 

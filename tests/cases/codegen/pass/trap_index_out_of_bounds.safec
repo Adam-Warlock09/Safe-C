@@ -1,0 +1,14 @@
+// An array index past the end, outside trusted.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int a[4];
+    a[0] = 0; a[1] = 1; a[2] = 2; a[3] = 3;
+    int i = 3;
+    int last = a[i];
+    i = i + 1;
+    int bad = a[i];
+    return 0;
+}

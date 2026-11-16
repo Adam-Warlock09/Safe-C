@@ -1,0 +1,11 @@
+// INT_MIN / -1 would be INT_MAX + 1: it overflows.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int min = -2147483647 - 1;
+    int minus_one = -1;
+    int q = min / minus_one;
+    return 0;
+}

@@ -1,0 +1,10 @@
+// 46341 * 46341 is larger than INT_MAX.
+// The runtime check must stop the program; arith_checks_boundaries checks
+// the values next to it that must not.
+// expect-trap
+
+int main() {
+    int x = 46341;
+    int square = x * x;
+    return 0;
+}

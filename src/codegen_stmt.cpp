@@ -33,6 +33,9 @@ void CodeGen::generate(const Program& prog) {
         }
     }
 
+    // Intrinsics the checked arithmetic used
+    for (const std::string& decl : used_intrinsics_) out_ << decl << "\n";
+
     // Emit the accumulated string pool at the end of the module
     // Inside c"..." only printable characters can appear as themselves; everything
     // else, and " and \ themselves, is written as \XX (two hex digits)
