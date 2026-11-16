@@ -1,0 +1,44 @@
+// Whitepaper §3.3.2: "Any attempt to read, write, borrow, move, or free a
+// variable after its ownership has been moved is rejected at compile time."
+// The accepted moves are in codegen/pass/whitepaper_3_3_2_move.
+
+void consume(own int* p) {
+    free(p);
+}
+
+// The whitepaper's example
+void read_after_move() {
+    own int* a = new int;
+    *a = 42;
+    own int* b = a;           // Ownership moves from a to b; a is invalidated
+    int v = *a;               // error: use of moved pointer 'a'
+    free(b);
+}
+
+void write_after_move() {
+    own int* a = new int;
+    own int* b = a;
+    *a = 1;                   // error: use of moved pointer 'a'
+    free(b);
+}
+
+void free_after_move() {      // a double free
+    own int* a = new int;
+    own int* b = a;
+    free(b);
+    free(a);                  // error: use of moved pointer 'a'
+}
+
+void move_after_move() {
+    own int* a = new int;
+    own int* b = a;
+    own int* c = a;           // error: use of moved pointer 'a'
+    free(b);
+    free(c);
+}
+
+void use_after_passing_to_own_parameter() {
+    own int* a = new int;
+    consume(a);               // a moves into consume
+    *a = 1;                   // error: use of moved pointer 'a'
+}

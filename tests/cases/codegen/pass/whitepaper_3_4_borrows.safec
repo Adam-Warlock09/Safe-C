@@ -1,0 +1,46 @@
+// Whitepaper §3.4: read borrows (T*) and write borrows (mut T*).
+// A read borrow comes from &x or from an existing pointer; a write borrow from
+// &mut x or from an own/mut pointer. A borrow in a call lasts for that
+// statement; a borrow bound to a variable lasts until the end of its block.
+// Several read borrows may exist at once. (§4.2's print_value is read_value,
+// returning the value instead of printing it.)
+// Returns the number of the first check that fails, 0 if all pass.
+
+int read_value(int* x) {
+    return *x;
+}
+
+void set_value(mut int* x, int v) {
+    *x = v;
+}
+
+int sum_both(int* a, int* b) {
+    return *a + *b;
+}
+
+int main() {
+    int bad = 0;
+    int local = 5;
+
+    if (read_value(&local) != 5) bad = 1;        // &x: read borrow, ends with the statement
+    set_value(&mut local, 7);                    // &mut x: write borrow, ends with the statement
+    if (local != 7) bad = 2;
+    if (sum_both(&local, &local) != 14) bad = 3; // shared reads: two read borrows at once
+
+    own int* p = new int;
+    *p = 3;
+    if (read_value(p) != 3) bad = 4;             // read borrow derived from an owner
+    set_value(p, 9);                             // write borrow derived from an owner
+    {
+        int* r = p;                              // bound to a variable: lasts to the end of this block
+        int* s = p;
+        if (*r + *s != 18) bad = 5;
+    }
+    {
+        mut int* w = p;                          // the only borrow while it lives
+        *w = *w + 1;
+    }
+    if (*p != 10) bad = 6;
+    free(p);                                     // allowed: every borrow of p has ended
+    return bad;
+}

@@ -1,0 +1,28 @@
+// Whitepaper §3.5.1 (free on a nullable own T*? that hasn't been narrowed),
+// §3.4.2 (owner freezing: no free while a borrow is active) and §3.5.3
+// (a node can't be freed while it still owns a child).
+// free on a borrow is a type error: sema/fail/whitepaper_null_and_free.
+
+struct Node {
+    int value;
+    own struct Node*? next;
+};
+
+void free_unchecked_nullable(own int*? p) {
+    free(p);                  // error: 'p' may be null
+}
+
+void free_while_borrowed() {
+    own int* p = new int;
+    int* r = p;
+    free(p);                  // error: cannot free 'p' while it is borrowed
+    int v = *r;
+}
+
+// §3.5.3: n->next must be moved out and set to null before free(n)
+void free_node_with_child() {
+    own struct Node* a = new struct Node;
+    own struct Node* b = new struct Node;
+    a->next = b;
+    free(a);                  // error: free('a') would leak 'a->next'
+}

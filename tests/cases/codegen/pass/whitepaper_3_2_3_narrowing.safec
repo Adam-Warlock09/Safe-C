@@ -1,0 +1,56 @@
+// Whitepaper §3.2.3: nullable pointers and flow-sensitive narrowing.
+// `if (p != null)` and `while (p != null)` narrow p from T*? to T* inside,
+// which allows dereferencing it and moving it into a non-nullable own T*.
+// The rejected forms are in sema/fail/whitepaper_null_and_free.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Node {
+    int value;
+    own struct Node*? next;
+};
+
+// The whitepaper's inspect_node, returning x so the test can check it
+int inspect_node(struct Node*? maybe_node) {
+    // int x = maybe_node->value;  // compile-time error: maybe_node may be null
+    int x = -1;
+    if (maybe_node != null) {
+        x = maybe_node->value;     // valid: narrowed to non-nullable struct Node* inside the branch
+    }
+    return x;
+}
+
+// while (cur != null) narrows cur inside the loop body
+int count_nodes(struct Node*? head) {
+    int n = 0;
+    struct Node*? cur = head;
+    while (cur != null) {
+        n = n + 1;
+        cur = cur->next;
+    }
+    return n;
+}
+
+int main() {
+    int bad = 0;
+    own struct Node* first = new struct Node;
+    own struct Node* second = new struct Node;
+    first->value = 1;
+    second->value = 2;
+    first->next = second;                   // first now owns the chain
+
+    if (inspect_node(first) != 1) bad = 1;  // a non-null pointer is also a valid T*?
+    if (inspect_node(null) != -1) bad = 2;
+    if (count_nodes(first) != 2) bad = 3;
+    if (count_nodes(null) != 0) bad = 4;
+
+    // narrowing a nullable owner allows moving it into a non-nullable own T*
+    own struct Node*? rest = first->next;
+    first->next = null;
+    if (rest != null) {
+        own struct Node* narrowed = rest;
+        if (narrowed->value != 2) bad = 5;
+        free(narrowed);
+    }
+    free(first);
+    return bad;
+}

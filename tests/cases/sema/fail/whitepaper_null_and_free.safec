@@ -1,0 +1,33 @@
+// Whitepaper §3.2.2 / §3.2.3: null only goes into nullable pointers, and a
+// T*? can't be dereferenced or passed as a T* until it is checked against
+// null. §3.5.1: free takes an owning pointer, never a read or write borrow.
+// The accepted forms are in codegen/pass/whitepaper_3_2_3_narrowing.
+
+struct Node {
+    int value;
+};
+
+int value_of(struct Node* n) {
+    return n->value;
+}
+
+// The whitepaper's inspect_node without the null check
+void inspect_node(struct Node*? maybe_node) {
+    int x = maybe_node->value;      // error: cannot use '->' on nullable pointer
+}
+
+void pass_unchecked(struct Node*? maybe_node) {
+    int x = value_of(maybe_node);   // error: cannot implicitly convert nullable pointer
+}
+
+void null_into_non_nullable() {
+    int* p = null;                  // error: 'null' can only be assigned to a nullable pointer type
+}
+
+void free_read_borrow(int* p) {
+    free(p);                        // error: 'free' requires an owning pointer
+}
+
+void free_write_borrow(mut int* p) {
+    free(p);                        // error: 'free' requires an owning pointer
+}
