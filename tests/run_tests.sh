@@ -2,11 +2,12 @@
 #
 # tests/run_tests.sh - the one test runner for the SafeC compiler.
 #
-#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec] [--only]
+#   bash tests/run_tests.sh [--lexer | --parser | --sema | --codegen | --safec] [--only] [--verbose]
 #
 #   --lexer, --parser, ...  run every stage up to and including that one
 #                           (no stage flag means --safec, which runs everything)
 #   --only                  run just the chosen stage
+#   --verbose, -v           list every test, not just the ones that fail
 #
 # Each stage keeps its tests in tests/cases/<stage>/:
 #   pass/NAME.safec       the compiler must accept this at that stage
@@ -29,11 +30,11 @@
 # In every stage a compiler crash counts as a failure, even for a fail test.
 #
 # tests/known_bugs.txt lists tests that fail today because of a known bug.
-# They show up as KNOWN and don't fail the run. A listed test that passes
+# They are counted as known bugs (listed with --verbose) and don't fail the run. A listed test that passes
 # shows up as FIXED and does fail the run, so the list gets cleaned up as
 # bugs are fixed.
 #
-# Exit status: 0 = nothing unexpected, 1 = unexpected results, 2 = usage or build error.
+# Exit status: 0 = no failures, 1 = something failed, 2 = usage or build error.
 # Written for bash 3.2 too (the macOS default), so no associative arrays.
 
 set -u
@@ -53,17 +54,19 @@ flag_of() {
 }
 
 usage() {
-    sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 # ---- options
 
 target="safec"
 only=0
+verbose=0
 for arg in "$@"; do
     case "$arg" in
         --lexer|--parser|--sema|--codegen|--safec) target="${arg#--}" ;;
         --only)    only=1 ;;
+        -v|--verbose) verbose=1 ;;
         -h|--help) usage; exit 0 ;;
         *)         echo "run_tests.sh: unknown option '$arg'"; usage; exit 2 ;;
     esac
@@ -218,11 +221,10 @@ run_stage() {   # $1 = stage name
     local stage="$1" dir="$CASES/$1"
     local pass=0 known=0 bad=0
 
-    echo
-    echo "${BOLD}== $stage ==${RESET}"
+    [ "$verbose" -eq 1 ] && { echo; echo "${BOLD}== $stage ==${RESET}"; }
 
     if [ ! -d "$dir" ]; then
-        echo "  (no tests yet: $dir does not exist)"
+        printf '%-10s no tests yet\n' "$stage"
         return
     fi
 
@@ -238,25 +240,33 @@ run_stage() {   # $1 = stage name
 
             if "case_$stage" "$kind" "$file"; then
                 if [ -n "$bug" ]; then
-                    echo "  ${RED}FIXED${RESET}  $kind/$name  (listed as bug $bug, but it passes now: remove it from $KNOWN)"
+                    echo "  ${RED}FIXED${RESET}  $stage/$kind/$name  (listed as bug $bug, but it passes now: remove it from $KNOWN)"
                     bad=$((bad + 1))
                 else
-                    echo "  ${GREEN}PASS${RESET}   $kind/$name"
+                    [ "$verbose" -eq 1 ] && echo "  ${GREEN}PASS${RESET}   $kind/$name"
                     pass=$((pass + 1))
                 fi
             elif [ -n "$bug" ]; then
-                echo "  ${YELLOW}KNOWN${RESET}  $kind/$name  (bug $bug)"
+                [ "$verbose" -eq 1 ] && echo "  ${YELLOW}KNOWN${RESET}  $kind/$name  (bug $bug)"
                 known=$((known + 1))
             else
-                echo "  ${RED}FAIL${RESET}   $kind/$name"
+                echo "  ${RED}FAIL${RESET}   $stage/$kind/$name"
                 sed 's/^/           /' "$TMP/why"
                 bad=$((bad + 1))
             fi
         done
     done
 
-    echo "  $stage: ${GREEN}$pass passed${RESET}, ${YELLOW}$known known bugs${RESET}, ${RED}$bad unexpected${RESET}"
+    printf '%-10s %s\n' "$stage" "$(counts $pass $known $bad)"
     TOTAL_PASS=$((TOTAL_PASS + pass)); TOTAL_KNOWN=$((TOTAL_KNOWN + known)); TOTAL_BAD=$((TOTAL_BAD + bad))
+}
+
+# "12 passed", plus known bugs and failures only when there are some
+counts() {   # $1 = passed, $2 = known, $3 = failed
+    local out="${GREEN}$1 passed${RESET}"
+    [ "$2" -gt 0 ] && out="$out, ${YELLOW}$2 known bugs${RESET}"
+    [ "$3" -gt 0 ] && out="$out, ${RED}$3 failed${RESET}"
+    echo "$out"
 }
 
 # ---- which stages to run
@@ -275,5 +285,5 @@ for stage in $STAGES; do
 done
 
 echo
-echo "${BOLD}Total:${RESET} ${GREEN}$TOTAL_PASS passed${RESET}, ${YELLOW}$TOTAL_KNOWN known bugs${RESET}, ${RED}$TOTAL_BAD unexpected${RESET}"
+echo "${BOLD}Total:${RESET} $(counts $TOTAL_PASS $TOTAL_KNOWN $TOTAL_BAD)"
 [ "$TOTAL_BAD" -eq 0 ]
