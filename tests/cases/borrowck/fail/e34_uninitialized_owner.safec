@@ -1,0 +1,15 @@
+// an own pointer must be given a value before it is used, on every path
+void never_set() {
+    own int* p;
+    free(p);                        // error: use of uninitialized owner 'p'
+}
+
+void set_on_one_path(int c) {
+    own int* p;
+    if (c) p = new int;
+    free(p);                        // error: 'p' may be uninitialized
+}
+
+int main() {
+    return 0;
+}

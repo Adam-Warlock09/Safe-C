@@ -80,6 +80,21 @@ std::string CodeGen::convert_int(const std::string& val, const std::string& from
     return res;
 }
 
+// Converts between any of i1, i8, i32 and float, the way sema's implicit casts mean it
+std::string CodeGen::convert_scalar(const std::string& val, const std::string& from_t, const std::string& to_t) {
+    if (from_t == to_t) return val;
+    if (from_t != "float" && to_t != "float") return convert_int(val, from_t, to_t);
+    std::string res = new_temp();
+    if (to_t == "float") {
+        emit(res + (from_t == "i1" ? " = uitofp " : " = sitofp ") + from_t + " " + val + " to float");
+    } else if (to_t == "i1") {
+        emit(res + " = fcmp une float " + val + ", 0.0");
+    } else {
+        emit(res + " = fptosi float " + val + " to " + to_t);
+    }
+    return res;
+}
+
 // One arithmetic, bitwise or comparison instruction on two values of type t
 std::string CodeGen::emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b) {
     bool f = (t == "float");
@@ -108,11 +123,11 @@ std::string CodeGen::emit_binop(BinaryOp op, const std::string& t, const std::st
     return res;
 }
 
-// x op= rhs, ++x, x++ ...: loads *ptr, applies op with rhs (sema has already converted
-// rhs to the target's type, or to int for raw pointer arithmetic), stores the result.
-// bool and char are computed as int and converted back, like the binary operators.
-// Returns {old value, new value}.
-std::pair<std::string, std::string> CodeGen::gen_update(const std::string& ptr, const Type* ty, BinaryOp op, const std::string& rhs) {
+// x op= rhs, ++x, x++ ...: loads *ptr, computes `x op rhs` in op_t, the type sema converted
+// rhs to (i32 or float, as for the binary operators; i32 for raw pointer arithmetic),
+// converts the result back to x's type and stores it. Returns {old value, new value}.
+std::pair<std::string, std::string> CodeGen::gen_update(const std::string& ptr, const Type* ty, BinaryOp op,
+                                                       const std::string& rhs, const std::string& op_t) {
     std::string t = llvm_type(ty);
     std::string old_v = new_temp();
     emit(old_v + " = load " + t + ", ptr " + ptr);
@@ -126,12 +141,9 @@ std::pair<std::string, std::string> CodeGen::gen_update(const std::string& ptr, 
         }
         new_v = new_temp();
         emit(new_v + " = getelementptr " + llvm_type(pt->pointee()) + ", ptr " + old_v + ", i32 " + n);
-    } else if (t == "float") {
-        new_v = emit_binop(op, t, old_v, rhs);
     } else {
-        std::string a = convert_int(old_v, t, "i32");
-        std::string b = convert_int(rhs, t, "i32");
-        new_v = convert_int(emit_binop(op, "i32", a, b), "i32", t);
+        std::string a = convert_scalar(old_v, t, op_t);
+        new_v = convert_scalar(emit_binop(op, op_t, a, rhs), op_t, t);
     }
     emit("store " + t + " " + new_v + ", ptr " + ptr);
     return {old_v, new_v};
@@ -419,9 +431,10 @@ std::string CodeGen::gen_expr(const Expr* e) {
         }
         if (u->isIncDec()) {
             std::string ptr = gen_lvalue(u->operand.get());
-            std::string one = llvm_type(u->type) == "float" ? "1.0" : "1";
+            bool is_float = llvm_type(u->type) == "float";
             bool inc = (u->op == UnaryOp::PreInc || u->op == UnaryOp::PostInc);
-            auto [old_v, new_v] = gen_update(ptr, u->type, inc ? BinaryOp::Add : BinaryOp::Sub, one);
+            auto [old_v, new_v] = gen_update(ptr, u->type, inc ? BinaryOp::Add : BinaryOp::Sub,
+                                             is_float ? "1.0" : "1", is_float ? "float" : "i32");
             bool pre = (u->op == UnaryOp::PreInc || u->op == UnaryOp::PreDec);
             return pre ? new_v : old_v;
         }
@@ -486,7 +499,7 @@ std::string CodeGen::gen_expr(const Expr* e) {
                 case AssignOp::Shr: op = BinaryOp::Shr; break;
                 case AssignOp::Assign: break;
             }
-            return gen_update(lhs_ptr, a->target->type, op, rhs_val).second;
+            return gen_update(lhs_ptr, a->target->type, op, rhs_val, llvm_type(a->value->type)).second;
         }
         std::string t = llvm_type(a->value->type);
         emit("store " + t + " " + rhs_val + ", ptr " + lhs_ptr);

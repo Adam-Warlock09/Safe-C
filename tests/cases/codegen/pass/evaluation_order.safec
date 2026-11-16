@@ -1,0 +1,45 @@
+// SafeC evaluates left to right. C leaves most of this unspecified (in
+// a[i] = e, clang computes e first and gcc computes a[i] first), so the order here
+// is a SafeC rule, not something inherited from C.
+// `trace` records the order: each call shifts in one digit.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int trace;
+
+int t(int d) {
+    trace = trace * 10 + d;
+    return d;
+}
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int a[4];
+    a[0] = 0; a[1] = 0; a[2] = 0; a[3] = 0;
+
+    trace = 0;
+    a[t(1)] = t(2);                     // the target, then the value
+    if (trace != 12 || a[1] != 2) return 1;
+
+    trace = 0;
+    a[t(3)] += t(2);                    // the same for compound assignment
+    if (trace != 32 || a[3] != 2) return 2;
+
+    trace = 0;
+    int s = add(t(1), t(2));            // arguments left to right
+    if (trace != 12 || s != 3) return 3;
+
+    trace = 0;
+    s = t(3) - t(1);                    // operands left to right
+    if (trace != 31 || s != 2) return 4;
+
+    trace = 0;
+    bool b = t(0) > 0 && t(5) > 0;      // && stops at the first false
+    if (trace != 0 || b) return 5;
+    trace = 0;
+    b = t(1) > 0 || t(5) > 0;           // || stops at the first true
+    if (trace != 1 || !b) return 6;
+    return 0;
+}

@@ -91,8 +91,10 @@ private:
     void emit_Store_compound_lit(const std::string& dest_ptr, const CompoundLiteralExpr* cl);
 
     std::string convert_int(const std::string& val, const std::string& from_t, const std::string& to_t);
+    std::string convert_scalar(const std::string& val, const std::string& from_t, const std::string& to_t);
     std::string emit_binop(BinaryOp op, const std::string& t, const std::string& a, const std::string& b);
-    std::pair<std::string, std::string> gen_update(const std::string& ptr, const Type* ty, BinaryOp op, const std::string& rhs);
+    std::pair<std::string, std::string> gen_update(const std::string& ptr, const Type* ty, BinaryOp op,
+                                                   const std::string& rhs, const std::string& op_t);
     std::string float_const(double v) const;
     int64_t const_int(const Expr* e);
     double const_float(const Expr* e);
