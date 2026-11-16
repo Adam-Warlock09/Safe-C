@@ -26,3 +26,36 @@
 # sema/fail/bug11_uninitialized_read               11  reading an unassigned variable is accepted
 # sema/fail/bug28_param_redeclared                 28  a local can redeclare a parameter in the body's top level
 # sema/fail/bug29_positional_after_designator      29  positional initializers after a designator restart at the first field
+
+# Codegen. A test can depend on several bugs; the number here is the one that
+# stops it today. When that bug is fixed, the test may stop on the next one:
+# update the number then.
+codegen/pass/arithmetic          14  char -> int conversion isn't generated (implicit casts are ignored)
+codegen/pass/assignment          16  compound assignment and ++/-- aren't generated
+codegen/pass/comparisons_logic   14  int used as a bool isn't converted (implicit casts are ignored)
+codegen/pass/control_flow        19  two loops declaring `i` give two %i.addr
+codegen/pass/conversions         14  implicit casts are ignored
+codegen/pass/defer               14  int used as a condition isn't converted (implicit casts are ignored)
+codegen/pass/floats              33  float literals are emitted empty
+codegen/pass/functions           15  <= and >= aren't generated
+codegen/pass/globals_scopes      19  a shadowing local gives a second %x.addr
+codegen/pass/literals            33  float literals are emitted empty
+codegen/pass/logic_in_loops      15  % isn't generated
+codegen/pass/pointers            15  <= and >= aren't generated
+codegen/pass/structs_arrays      14  char -> int conversion isn't generated (implicit casts are ignored)
+
+# Same programs, built and run
+safec/pass/arithmetic            14  char -> int conversion isn't generated (implicit casts are ignored)
+safec/pass/assignment            16  compound assignment and ++/-- aren't generated
+safec/pass/comparisons_logic     14  int used as a bool isn't converted (implicit casts are ignored)
+safec/pass/control_flow          19  two loops declaring `i` give two %i.addr
+safec/pass/conversions           14  implicit casts are ignored
+safec/pass/defer                 14  int used as a condition isn't converted (implicit casts are ignored)
+safec/pass/floats                33  float literals are emitted empty
+safec/pass/functions             15  <= and >= aren't generated
+safec/pass/globals_scopes        19  a shadowing local gives a second %x.addr
+safec/pass/literals              33  float literals are emitted empty
+safec/pass/logic_in_loops        15  % isn't generated
+safec/pass/new_zero_fill         20  new doesn't zero the memory it allocates
+safec/pass/pointers              15  <= and >= aren't generated
+safec/pass/structs_arrays        14  char -> int conversion isn't generated (implicit casts are ignored)

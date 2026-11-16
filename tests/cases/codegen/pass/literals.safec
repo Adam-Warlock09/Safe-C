@@ -1,0 +1,19 @@
+// Number, character and string literals.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int main() {
+    if (010 != 10) return 1;                    // a leading zero is still decimal
+    if (09 != 9) return 2;
+    if (0x1F != 31) return 3;
+    if (0XfF != 255) return 4;
+    if ('\n' != 10) return 5;
+    if ('\t' != 9) return 6;
+    if ('\0' != 0) return 7;
+    if ('\\' != 92) return 8;
+    if ('\'' != 39) return 9;
+    if (2147483647 != 2147483647) return 10;
+    if (1.5f != 1.5) return 11;
+    if (2e3 != 2000.0) return 12;
+    char* s = "tab\there, quote\" newline\n backslash\\";
+    return 0;
+}

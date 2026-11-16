@@ -1,0 +1,14 @@
+// && and || inside a long loop. Each evaluation must not use up stack
+// space, or a million iterations overflow the stack.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int main() {
+    int n = 0;
+    int hits = 0;
+    while (n < 1000000 && hits >= 0) {
+        if (n % 2 == 0 || n % 3 == 0) hits = hits + 1;
+        n = n + 1;
+    }
+    if (hits != 666667) return 1;
+    return 0;
+}

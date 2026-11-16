@@ -1,0 +1,55 @@
+// Calls, recursion, mutual recursion, and struct and array arguments.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct P {
+    int x;
+    int y;
+};
+
+int fact(int n) {
+    if (n <= 1) return 1;
+    return n * fact(n - 1);
+}
+
+bool is_even(int n) {
+    if (n == 0) return true;
+    return is_odd(n - 1);                       // defined below
+}
+
+bool is_odd(int n) {
+    if (n == 0) return false;
+    return is_even(n - 1);
+}
+
+int sum(int xs[], int n) {
+    int s = 0;
+    for (int i = 0; i < n; i++) s += xs[i];
+    return s;
+}
+
+struct P swap(struct P p) {
+    return (struct P){ p.y, p.x };
+}
+
+int dist(struct P p) {
+    return p.x + p.y;
+}
+
+void nothing() {
+}
+
+int main() {
+    if (fact(5) != 120) return 1;
+    if (!is_even(10)) return 2;
+    if (!is_odd(7)) return 3;
+    int a[4];
+    a[0] = 1; a[1] = 2; a[2] = 3; a[3] = 4;
+    if (sum(a, 4) != 10) return 4;
+    struct P p = (struct P){ 3, 8 };
+    struct P q = swap(p);
+    if (q.x != 8 || q.y != 3) return 5;
+    if (p.x != 3) return 6;                     // structs are passed by value
+    if (dist(q) != 11) return 7;
+    nothing();
+    return 0;
+}

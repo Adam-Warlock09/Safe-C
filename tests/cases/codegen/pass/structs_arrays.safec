@@ -1,0 +1,43 @@
+// Structs, compound literals and arrays.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Inner {
+    int a;
+    int b;
+};
+
+struct Outer {
+    struct Inner in;
+    int arr[3];
+    char tag;
+};
+
+int main() {
+    struct Inner i = (struct Inner){ .b = 2, .a = 1 };
+    if (i.a != 1 || i.b != 2) return 1;
+    struct Inner j = (struct Inner){ 5 };       // fields left out are zero
+    if (j.a != 5 || j.b != 0) return 2;
+    struct Inner k = (struct Inner){ .b = 4 };
+    if (k.a != 0 || k.b != 4) return 3;
+
+    struct Outer o;
+    o.in = i;                                   // copies the whole struct
+    o.in.b = 9;
+    if (i.b != 2) return 4;                     // the copy is separate
+    if (o.in.a != 1 || o.in.b != 9) return 5;
+    o.arr[0] = 10; o.arr[1] = 20; o.arr[2] = 30;
+    o.tag = 'x';
+    if (o.arr[1] + o.arr[2] != 50) return 6;
+    if (o.tag != 'x') return 7;
+
+    int grid[2][3];
+    for (int r = 0; r < 2; r++)
+        for (int c = 0; c < 3; c++)
+            grid[r][c] = r * 10 + c;
+    if (grid[1][2] != 12) return 8;
+    if (grid[0][1] != 1) return 9;
+
+    struct Inner* p = &o.in;
+    if (p->b != 9) return 10;
+    return 0;
+}

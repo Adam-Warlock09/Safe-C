@@ -1,0 +1,30 @@
+// Implicit conversions between char, int, bool and float.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int twice(int v) {
+    return v * 2;
+}
+
+int main() {
+    char c = 'A';
+    int i = c;                                  // char -> int
+    if (i != 65) return 1;
+    char d = 66;                                // int -> char
+    if (d != 'B') return 2;
+    int big = 300;
+    char e = big;                               // int -> char keeps the low 8 bits
+    if (e != 44) return 3;
+    bool b = 5;                                 // nonzero int -> true
+    if (!b) return 4;
+    int one = b;                                // true -> 1
+    if (one != 1) return 5;
+    float f = 7;                                // int -> float
+    if (f != 7.0) return 6;
+    int t = 3.9;                                // float -> int truncates
+    if (t != 3) return 7;
+    if (twice(c) != 130) return 8;              // char argument -> int parameter
+    int r = 0;
+    if (i) r = 1;                               // int used as a condition
+    if (r != 1) return 9;
+    return 0;
+}

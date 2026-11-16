@@ -6,6 +6,8 @@
 #   make safec       build the full compiler driver
 #   make test        run all test suites (lexer, parser, sema, codegen)
 #   make test-lexer  run the lexer stage of tests/run_tests.sh (likewise test-parser, test-sema)
+#   make test-ir     check the LLVM IR the codegen tests produce
+#   make test-codegen build and run the codegen tests
 #   make clean       remove build artifacts
 
 CC          = cc
@@ -64,8 +66,7 @@ lexer: lexer.o
 safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
 	$(CXX) -o $@ $^
 
-# tests/run_tests.sh is the new single runner; stages move into it one at a time.
-# test-codegen still uses the old runner until its stage moves.
+# All tests go through tests/run_tests.sh; these targets run one stage each.
 test-lexer:
 	bash tests/run_tests.sh --lexer --only
 
@@ -75,10 +76,14 @@ test-parser:
 test-sema:
 	bash tests/run_tests.sh --sema --only
 
-test-codegen: safec
-	bash tests/codegen/run_tests.sh
+test-codegen:
+	bash tests/run_tests.sh --safec --only    # builds and runs the codegen programs
 
-test: test-lexer test-parser test-sema test-codegen
+test-ir:
+	bash tests/run_tests.sh --codegen --only  # only checks the generated LLVM IR
+
+test:
+	bash tests/run_tests.sh
 
 clean:
 	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
@@ -87,4 +92,4 @@ clean:
 	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o \
 	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser test-sema test-codegen clean
+.PHONY: all test test-lexer test-parser test-sema test-ir test-codegen clean

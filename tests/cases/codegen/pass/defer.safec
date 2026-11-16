@@ -1,0 +1,70 @@
+// defer runs at every exit from its block, last registered first.
+// `trace` records the order: each step shifts in one digit.
+// Returns the number of the first check that fails, 0 if all pass.
+
+int trace;
+
+void step(int d) {
+    trace = trace * 10 + d;
+}
+
+void at_block_end() {
+    {
+        defer step(1);
+        defer step(2);
+        step(3);
+    }
+    step(4);
+}
+
+int at_return(int early) {
+    defer step(1);
+    if (early) return 5;
+    step(2);
+    return 6;
+}
+
+void falls_off_the_end() {
+    defer step(9);
+    step(8);
+}
+
+void in_loop() {
+    for (int i = 0; i < 3; i++) {
+        defer step(1);
+        if (i == 1) continue;                   // the defer still runs
+        if (i == 2) break;                      // and here too
+        step(2);
+    }
+}
+
+int return_value_first() {
+    trace = 5;
+    defer step(7);
+    return trace;                               // computed before the defer runs
+}
+
+int main() {
+    trace = 0;
+    at_block_end();
+    if (trace != 3214) return 1;
+
+    trace = 0;
+    if (at_return(1) != 5) return 2;
+    if (trace != 1) return 3;
+    trace = 0;
+    if (at_return(0) != 6) return 4;
+    if (trace != 21) return 5;
+
+    trace = 0;
+    falls_off_the_end();
+    if (trace != 89) return 6;
+
+    trace = 0;
+    in_loop();
+    if (trace != 2111) return 7;
+
+    if (return_value_first() != 5) return 8;
+    if (trace != 57) return 9;
+    return 0;
+}
