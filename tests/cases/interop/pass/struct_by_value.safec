@@ -1,0 +1,55 @@
+// Struct shapes passed to and returned from SafeC functions by C code, under
+// the C calling convention (x86-64 System V): registers, split 8-byte
+// chunks, byval/sret memory. Each bump_X changes every field, so a value
+// only comes back right if SafeC read and wrote each field where C put it.
+// One bump function per shape; the C side, struct_by_value.c, checks each.
+
+struct OneInt { int a; };
+struct OneChar { char a; };
+struct OneBool { bool a; };
+struct ThreeChars { char a; char b; char c; };
+struct IntCharBool { int x; char c; bool b; };
+struct CharInt { char a; int b; };
+struct ThreeInts { int a; int b; int c; };
+struct FourInts { int a; int b; int c; int d; };
+struct OneFloat { float a; };
+struct TwoFloats { float a; float b; };
+struct ThreeFloats { float a; float b; float c; };
+struct FloatInt { float a; int b; };
+struct IntTwoFloats { int a; float b; float c; };
+struct BoolFloat { bool a; float f; };
+struct PtrInt { raw int* p; int a; };
+struct PtrFloat { raw int* p; float f; };
+struct TwoPtrs { raw int* p; raw int* q; };
+struct FloatArray { float v[3]; };
+struct CharArray5 { char s[5]; };
+struct CharArray9 { char s[9]; };
+struct IntArray3 { int v[3]; };
+struct Nested { int a; struct TwoFloats f; };
+struct Big { int a; int b; int c; int d; int e; };
+struct PtrsAndInt { raw int* p; raw int* q; int a; };
+
+struct OneInt bump_OneInt(struct OneInt x) { x.a = x.a + 1; return x; }
+struct OneChar bump_OneChar(struct OneChar x) { x.a = x.a + 1; return x; }
+struct OneBool bump_OneBool(struct OneBool x) { x.a = !x.a; return x; }
+struct ThreeChars bump_ThreeChars(struct ThreeChars x) { x.a = x.a + 1; x.b = x.b + 1; x.c = x.c + 1; return x; }
+struct IntCharBool bump_IntCharBool(struct IntCharBool x) { x.x = x.x + 1; x.c = x.c + 1; x.b = !x.b; return x; }
+struct CharInt bump_CharInt(struct CharInt x) { x.a = x.a + 1; x.b = x.b + 1; return x; }
+struct ThreeInts bump_ThreeInts(struct ThreeInts x) { x.a = x.a + 1; x.b = x.b + 1; x.c = x.c + 1; return x; }
+struct FourInts bump_FourInts(struct FourInts x) { x.a = x.a + 1; x.b = x.b + 1; x.c = x.c + 1; x.d = x.d + 1; return x; }
+struct OneFloat bump_OneFloat(struct OneFloat x) { x.a = x.a + 1.0; return x; }
+struct TwoFloats bump_TwoFloats(struct TwoFloats x) { x.a = x.a + 1.0; x.b = x.b + 1.0; return x; }
+struct ThreeFloats bump_ThreeFloats(struct ThreeFloats x) { x.a = x.a + 1.0; x.b = x.b + 1.0; x.c = x.c + 1.0; return x; }
+struct FloatInt bump_FloatInt(struct FloatInt x) { x.a = x.a + 1.0; x.b = x.b + 1; return x; }
+struct IntTwoFloats bump_IntTwoFloats(struct IntTwoFloats x) { x.a = x.a + 1; x.b = x.b + 1.0; x.c = x.c + 1.0; return x; }
+struct BoolFloat bump_BoolFloat(struct BoolFloat x) { x.a = !x.a; x.f = x.f + 1.0; return x; }
+struct PtrInt bump_PtrInt(struct PtrInt x) { x.a = x.a + 1; return x; }
+struct PtrFloat bump_PtrFloat(struct PtrFloat x) { x.f = x.f + 1.0; return x; }
+struct TwoPtrs bump_TwoPtrs(struct TwoPtrs x) {  return x; }
+struct FloatArray bump_FloatArray(struct FloatArray x) { x.v[0] = x.v[0] + 1.0; x.v[1] = x.v[1] + 1.0; x.v[2] = x.v[2] + 1.0; return x; }
+struct CharArray5 bump_CharArray5(struct CharArray5 x) { x.s[0] = x.s[0] + 1; x.s[1] = x.s[1] + 1; x.s[2] = x.s[2] + 1; x.s[3] = x.s[3] + 1; x.s[4] = x.s[4] + 1; return x; }
+struct CharArray9 bump_CharArray9(struct CharArray9 x) { x.s[0] = x.s[0] + 1; x.s[1] = x.s[1] + 1; x.s[2] = x.s[2] + 1; x.s[3] = x.s[3] + 1; x.s[4] = x.s[4] + 1; x.s[5] = x.s[5] + 1; x.s[6] = x.s[6] + 1; x.s[7] = x.s[7] + 1; x.s[8] = x.s[8] + 1; return x; }
+struct IntArray3 bump_IntArray3(struct IntArray3 x) { x.v[0] = x.v[0] + 1; x.v[1] = x.v[1] + 1; x.v[2] = x.v[2] + 1; return x; }
+struct Nested bump_Nested(struct Nested x) { x.a = x.a + 1; x.f.a = x.f.a + 1.0; x.f.b = x.f.b + 1.0; return x; }
+struct Big bump_Big(struct Big x) { x.a = x.a + 1; x.b = x.b + 1; x.c = x.c + 1; x.d = x.d + 1; x.e = x.e + 1; return x; }
+struct PtrsAndInt bump_PtrsAndInt(struct PtrsAndInt x) { x.a = x.a + 1; return x; }

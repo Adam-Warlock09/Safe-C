@@ -8,6 +8,7 @@
 #   make test-lexer  run the lexer stage of tests/run_tests.sh (likewise test-parser, test-sema)
 #   make test-ir     check the LLVM IR the codegen tests produce
 #   make test-codegen build and run the codegen tests
+#   make test-interop check SafeC objects linked with C (calling convention)
 #   make test-driver  check the command line (-c, -S, -o, -l, ...)
 #   make clean       remove build artifacts
 
@@ -67,19 +68,22 @@ target_info.h:
 codegen_expr.o: src/codegen_expr.cpp src/codegen.h src/new_ast.h target_info.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/codegen_expr.cpp
 
+codegen_abi.o: src/codegen_abi.cpp src/codegen.h src/new_ast.h
+	$(CXX) $(CXXFLAGS) -c -o $@ src/codegen_abi.cpp
+
 codegen_stmt.o: src/codegen_stmt.cpp src/codegen.h src/new_ast.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/codegen_stmt.cpp
 
 driver.o: src/driver.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h src/sema.h src/tokens.h src/codegen.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/driver.cpp
 
-safec: driver.o parser.tab.o lexer-lib.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
+safec: driver.o parser.tab.o lexer-lib.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o codegen_abi.o
 	$(CXX) -o $@ $^
 
 lexer: lexer.o
 	$(CC) -o $@ lexer.o
 
-safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o
+safec-parser: parser.tab.o lexer-lib.o main_parser.o ast_dump.o sema.o borrowck.o codegen_expr.o codegen_stmt.o codegen_abi.o
 	$(CXX) -o $@ $^
 
 # All tests go through tests/run_tests.sh; these targets run one stage each.
@@ -98,6 +102,9 @@ test-codegen:
 test-ir:
 	bash tests/run_tests.sh --codegen --only  # only checks the generated LLVM IR
 
+test-interop:
+	bash tests/run_tests.sh --interop --only
+
 test-driver:
 	bash tests/run_tests.sh --driver --only
 
@@ -108,7 +115,7 @@ clean:
 	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
 	      parser.tab.o parser.tab.cpp parser.tab.hpp parser.tab.c parser.tab.h \
 	      location.hh position.hh stack.hh main_parser.o ast_dump.o sema.o \
-	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o target_info.h \
+	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o codegen_abi.o target_info.h \
 	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser test-sema test-ir test-codegen test-driver clean
+.PHONY: all test test-lexer test-parser test-sema test-ir test-codegen test-interop test-driver clean
