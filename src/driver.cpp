@@ -1,25 +1,41 @@
 /*
  * driver.cpp - runs the compiler up to a given stage and prints the result.
  *
- *   driver [options] <file.safec> [c_files...]
+ *   safec [options] <file.safec> [inputs...]
  *
+ * Stages (default: build an executable):
  *   --till-lexer    print the token stream
  *   --till-parser   print the AST
  *   --till-sema     run semantic + ownership checks, print diagnostics
- *   --till-codegen  emit LLVM IR (.ll) and stop (alias: --emit-llvm)
- *   
- *   -o <file>       output binary name (default: a.out)
- *   -O2             enable optimizations during clang linkage
+ *   --emit-llvm, -S emit LLVM IR and stop (alias: --till-codegen)
+ *                   written to -o, or <file>.ll next to the source
+ *   -c              compile to an object file, don't link
+ *                   written to -o, or <file>.o next to the source
+ *
+ * Build options:
+ *   -o <file>       output file (executable default: a.out)
+ *   -O0 .. -O3, -g  passed to clang
+ *   -l<lib>, -L<dir> passed to the linker (also "-l lib", "-L dir")
+ *   inputs          .c, .o, .a and .so files, compiled/linked with the program
+ *
+ * For -c and executables the IR goes to a temporary file that is removed
+ * afterwards. clang is run directly (no shell), so paths may contain spaces.
  *
  * Exit codes: 0 ok, 1 errors, 2 bad usage.
  */
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
+
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "parser.tab.hpp"
 #include "ast_dump.h"
@@ -97,64 +113,199 @@ void SafeCParser::error(const location_type &loc, const std::string &msg) {
 
 enum Stage { LEXER, PARSER, SEMA, CODEGEN, LINK };
 
+struct Options {
+    Stage till = LINK;
+    bool compile_only = false;               // -c
+    const char *file = nullptr;              // the SafeC source
+    std::string output;                      // -o, empty if not given
+    std::vector<std::string> clang_flags;    // -O<n>, -g
+    std::vector<std::string> inputs;         // .c .o .a .so files
+    std::vector<std::string> link_flags;     // -l<lib>, -L<dir>
+};
+
 static int usage() {
     std::fprintf(stderr,
-                 "usage: safec [options] <file.safec> [c_files...]\n"
-                 "Stages:\n"
-                 "  --till-lexer    print token stream\n"
-                 "  --till-parser   print the AST\n"
-                 "  --till-sema     run semantic + ownership checks\n"
-                 "  --emit-llvm     emit LLVM IR and stop (--till-codegen)\n"
-                 "Build Options:\n"
-                 "  -o <file>       output binary name (default: a.out)\n"
-                 "  -O1, -O2, -O3   optimization levels\n");
+                 "usage: safec [options] <file.safec> [inputs...]\n"
+                 "Stages (default: build an executable):\n"
+                 "  --till-lexer     print token stream\n"
+                 "  --till-parser    print the AST\n"
+                 "  --till-sema      run semantic + ownership checks\n"
+                 "  --emit-llvm, -S  emit LLVM IR and stop (--till-codegen)\n"
+                 "  -c               compile to an object file, don't link\n"
+                 "Build options:\n"
+                 "  -o <file>        output file (executable default: a.out)\n"
+                 "  -O0 .. -O3, -g   optimization level, debug info\n"
+                 "  -l<lib>, -L<dir> libraries to link and where to find them\n"
+                 "  inputs           .c, .o, .a and .so files to build and link with\n");
     return 2;
 }
 
-int main(int argc, char **argv) {
-    Stage till = LINK; // Default to full build pipeline
-    const char *file = nullptr;
-    std::string output_bin = "a.out";
-    std::string clang_opts = "";
-    std::string c_files = "";
+static int usage_error(const std::string &msg) {
+    std::fprintf(stderr, "safec: %s\n", msg.c_str());
+    return usage();
+}
 
-    // Parse CLI arguments
+static bool ends_with(const std::string &s, const char *suffix) {
+    size_t n = std::strlen(suffix);
+    return s.size() >= n && s.compare(s.size() - n, n, suffix) == 0;
+}
+
+// Returns -1 when the options are fine, otherwise the exit code to stop with
+static int parse_args(int argc, char **argv, Options &opt) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if      (arg == "--till-lexer")  till = LEXER;
-        else if (arg == "--till-parser") till = PARSER;
-        else if (arg == "--till-sema")   till = SEMA;
-        else if (arg == "--till-codegen" || arg == "--emit-llvm") till = CODEGEN;
+        if      (arg == "--till-lexer")  opt.till = LEXER;
+        else if (arg == "--till-parser") opt.till = PARSER;
+        else if (arg == "--till-sema")   opt.till = SEMA;
+        else if (arg == "--till-codegen" || arg == "--emit-llvm" || arg == "-S") opt.till = CODEGEN;
+        else if (arg == "-c") opt.compile_only = true;
         else if (arg == "-o") {
-            if (i + 1 < argc) output_bin = argv[++i];
-            else return usage();
+            if (i + 1 >= argc) return usage_error("-o needs a file name");
+            opt.output = argv[++i];
         }
-        else if (arg == "-O1" || arg == "-O2" || arg == "-O3" || arg == "-g") {
-            clang_opts += arg + " ";
+        else if (arg == "-O0" || arg == "-O1" || arg == "-O2" || arg == "-O3" || arg == "-g") {
+            opt.clang_flags.push_back(arg);
         }
-        else if (arg.length() >= 6 && (arg.substr(arg.length() - 6) == ".safec" || arg.substr(arg.length() - 3) == ".sc")) {
-            file = argv[i];
+        else if (arg == "-l" || arg == "-L") {           // separate form: -l m, -L dir
+            if (i + 1 >= argc) return usage_error(arg + " needs an argument");
+            opt.link_flags.push_back(arg + argv[++i]);
         }
-        else if (arg.length() >= 2 && (arg.substr(arg.length() - 2) == ".c" || arg.substr(arg.length() - 2) == ".o")) {
-            c_files += arg + " ";
+        else if (arg.size() > 2 && (arg.compare(0, 2, "-l") == 0 || arg.compare(0, 2, "-L") == 0)) {
+            opt.link_flags.push_back(arg);
+        }
+        else if (ends_with(arg, ".c") || ends_with(arg, ".o") || ends_with(arg, ".a") || ends_with(arg, ".so")) {
+            opt.inputs.push_back(arg);
         }
         else if (arg[0] == '-') {
-            return usage();
+            return usage_error("unknown option '" + arg + "'");
         }
-        else {
-            file = argv[i]; // Fallback if extension isn't exactly .safec/.sc
+        else {                                            // .safec, .sc, or any other name
+            if (opt.file) return usage_error("only one SafeC source file can be compiled at a time");
+            opt.file = argv[i];
         }
     }
-    if (!file) return usage();
+    if (!opt.file) return usage_error("no SafeC source file given");
+    if (opt.compile_only && opt.till != LINK)
+        return usage_error("-c can't be combined with a --till/--emit-llvm stage");
+    if (opt.compile_only && !opt.inputs.empty())
+        return usage_error("-c compiles only the SafeC file; build the other inputs separately");
+    return -1;
+}
+
+// The source path without its .safec/.sc extension, for default output names
+static std::string strip_extension(const std::string &path) {
+    if (ends_with(path, ".safec")) return path.substr(0, path.size() - 6);
+    if (ends_with(path, ".sc"))    return path.substr(0, path.size() - 3);
+    return path;
+}
+
+// A file in $TMPDIR (or /tmp) that is deleted when this goes out of scope
+struct TempFile {
+    std::string path;
+    ~TempFile() { if (!path.empty()) std::remove(path.c_str()); }
+};
+
+static bool make_temp_file(TempFile &tmp, const char *suffix) {
+    const char *dir = std::getenv("TMPDIR");
+    std::string name = std::string(dir && *dir ? dir : "/tmp") + "/safec-XXXXXX" + suffix;
+    std::vector<char> buf(name.begin(), name.end());
+    buf.push_back('\0');
+    int fd = mkstemps(buf.data(), static_cast<int>(std::strlen(suffix)));
+    if (fd < 0) {
+        std::fprintf(stderr, "safec: cannot create a temporary file in %s: %s\n",
+                     dir && *dir ? dir : "/tmp", std::strerror(errno));
+        return false;
+    }
+    close(fd);
+    tmp.path = buf.data();
+    return true;
+}
+
+// Runs a program with these arguments, without a shell (so file names are
+// passed through exactly). Returns its exit status, or -1 if it couldn't run
+// or was killed by a signal; the reason has been printed then
+static int run_program(const std::vector<std::string> &args) {
+    std::vector<char *> argv;
+    for (const std::string &a : args) argv.push_back(const_cast<char *>(a.c_str()));
+    argv.push_back(nullptr);
+
+    std::fflush(stdout);
+    std::fflush(stderr);
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::fprintf(stderr, "safec: cannot start %s: %s\n", argv[0], std::strerror(errno));
+        return -1;
+    }
+    if (pid == 0) {
+        execvp(argv[0], argv.data());
+        std::fprintf(stderr, "safec: cannot run %s: %s\n", argv[0], std::strerror(errno));
+        _exit(127);
+    }
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            std::fprintf(stderr, "safec: waiting for %s failed: %s\n", argv[0], std::strerror(errno));
+            return -1;
+        }
+    }
+    if (WIFSIGNALED(status)) {
+        std::fprintf(stderr, "safec: %s was killed by signal %d\n", argv[0], WTERMSIG(status));
+        return -1;
+    }
+    return WEXITSTATUS(status);
+}
+
+// Writes the program's LLVM IR to path. Returns false (after reporting why) on failure
+static bool write_ir(const safec::Program &prog, const char *file, const std::string &path) {
+    {
+        safec::DiagnosticsEngine cg_diag(file);   // so sema's warnings aren't printed twice
+        if (!safec::CodeGen::check_reserved_names(prog, cg_diag)) {
+            cg_diag.print(std::cerr);
+            return false;
+        }
+    }
+
+    std::ofstream out(path);
+    if (!out) {
+        std::fprintf(stderr, "safec: cannot open %s for writing LLVM IR\n", path.c_str());
+        return false;
+    }
+
+    // codegen throws only on programs sema should have rejected: a compiler bug
+    try {
+        safec::CodeGen cg(out);
+        cg.generate(prog);
+    } catch (const std::exception &e) {
+        out.close();
+        std::remove(path.c_str());          // don't leave half-written IR behind
+        std::fprintf(stderr, "%s: internal compiler error in codegen: %s\n", file, e.what());
+        return false;
+    }
+
+    out.close();
+    if (!out) {
+        std::fprintf(stderr, "safec: writing %s failed\n", path.c_str());
+        std::remove(path.c_str());
+        return false;
+    }
+    return true;
+}
+
+int main(int argc, char **argv) {
+    Options opt;
+    int bad_usage = parse_args(argc, argv, opt);
+    if (bad_usage >= 0) return bad_usage;
+    const char *file = opt.file;
 
     yyin = std::fopen(file, "r");
     if (!yyin) {
-        std::fprintf(stderr, "driver: cannot open file '%s'\n", file);
+        std::fprintf(stderr, "safec: cannot open file '%s'\n", file);
         return 1;
     }
 
     // ---- 1. Lexer: the lexer prints each token as it scans it
-    if (till == LEXER) {
+    if (opt.till == LEXER) {
         safec_lexer_trace = 1;
         while (yylex() != 0) {}
         return safec_lexer_errors > 0 ? 1 : 0;
@@ -170,7 +321,7 @@ int main(int argc, char **argv) {
         diag.print(std::cerr);
         return 1;
     }
-    if (till == PARSER) {
+    if (opt.till == PARSER) {
         diag.print(std::cerr);
         safec::dumpProgram(prog, std::cout);
         return 0;
@@ -181,37 +332,45 @@ int main(int argc, char **argv) {
     sema.run(prog);
     diag.print(std::cerr);
     if (diag.hasErrors()) return 1;
-    if (till == SEMA) {
+    if (opt.till == SEMA) {
         std::printf("OK: semantic checks passed\n");
         return 0;
     }
 
-    // ---- 4. Codegen (Emit LLVM IR)
-    std::string out_file = std::string(file) + ".ll";
-    std::ofstream out(out_file);
-    if (!out) {
-        std::cerr << "driver: cannot open " << out_file << " for writing LLVM IR\n";
-        return 1;
-    }
-
-    safec::CodeGen cg(out);
-    cg.generate(prog);
-    out.close();
-
-    if (till == CODEGEN) {
-        std::printf("OK: Successfully emitted %s\n", out_file.c_str());
+    // ---- 4. Codegen: LLVM IR, kept only when it is what was asked for
+    if (opt.till == CODEGEN) {
+        std::string ir_path = opt.output.empty() ? strip_extension(file) + ".ll" : opt.output;
+        if (!write_ir(prog, file, ir_path)) return 1;
+        std::printf("OK: Successfully emitted %s\n", ir_path.c_str());
         return 0;
     }
 
-    // ---- 5. Link (Invoke Clang)
-    std::string clang_cmd = "clang " + out_file + " " + clang_opts + c_files + " -Wno-override-module -o " + output_bin;
-    int link_status = std::system(clang_cmd.c_str());
-    
-    if (link_status != 0) {
-        std::fprintf(stderr, "Linker Error: clang backend failed to compile the generated LLVM IR.\n");
+    TempFile ir;
+    if (!make_temp_file(ir, ".ll")) return 1;
+    if (!write_ir(prog, file, ir.path)) return 1;
+
+    // ---- 5. clang: object file (-c) or linked executable
+    std::string target = !opt.output.empty() ? opt.output
+                       : opt.compile_only    ? strip_extension(file) + ".o"
+                       :                       std::string("a.out");
+    std::vector<std::string> cmd = {"clang"};
+    if (opt.compile_only) cmd.push_back("-c");
+    cmd.push_back(ir.path);
+    cmd.insert(cmd.end(), opt.clang_flags.begin(), opt.clang_flags.end());
+    cmd.insert(cmd.end(), opt.inputs.begin(), opt.inputs.end());
+    if (!opt.compile_only)   // after the inputs that use them; meaningless without linking
+        cmd.insert(cmd.end(), opt.link_flags.begin(), opt.link_flags.end());
+    cmd.push_back("-o");
+    cmd.push_back(target);
+
+    int status = run_program(cmd);
+    if (status != 0) {
+        // clang has printed its own errors; 127 means it couldn't be started
+        if (status > 0 && status != 127)
+            std::fprintf(stderr, "safec: clang failed (exit %d) while building %s\n", status, target.c_str());
         return 1;
     }
 
-    std::printf("OK: Successfully compiled %s -> %s\n", file, output_bin.c_str());
+    std::printf("OK: Successfully compiled %s -> %s\n", file, target.c_str());
     return 0;
 }
