@@ -145,6 +145,9 @@ private:
     std::string abi_return_type(const AbiSignature& sig) const;
     std::string abi_param_list(const AbiSignature& sig, const FunctionType* ft,
                                const std::vector<std::string>* names) const;
+    std::string abi_param_types(const AbiSignature& sig) const;
+    void emit_declare(const FunctionDecl& fn);
+    std::string promote_variadic_arg(const Type* t, const std::string& val);
     std::string temp_alloca_ir(const std::string& ir_type);
     std::vector<std::string> split_for_abi(const AbiArg& a, const Type* t, const std::string& val);
     std::string join_from_abi(const AbiArg& a, const std::vector<std::string>& pieces);

@@ -1,0 +1,92 @@
+// SafeC calling C: functions and globals declared here, defined in
+// safec_calls_c.c. Checks the calling convention from the calling side
+// (struct_by_value checks it from the called side), extern globals,
+// ownership crossing in both directions, and the C promotions of '...'
+// arguments. Returns the number of the first check that fails, 0 if all pass.
+
+struct IntCharBool { int x; char c; bool b; };
+struct ThreeInts   { int a; int b; int c; };
+struct TwoFloats   { float x; float y; };
+struct ThreeFloats { float a; float b; float c; };
+struct IntFloats   { int a; float b; float c; };
+struct CharArray5  { char s[5]; };
+struct Big         { int a; int b; int c; int d; int e; };
+struct Quad        { int a; int b; int c; int d; };
+
+// structs passed and returned by value: C adds 1 to each field (flips bools)
+struct IntCharBool c_bump_icb(struct IntCharBool v);
+struct ThreeInts   c_bump_i3(struct ThreeInts v);
+struct TwoFloats   c_bump_f2(struct TwoFloats v);
+struct ThreeFloats c_bump_f3(struct ThreeFloats v);
+struct IntFloats   c_bump_iff(struct IntFloats v);
+struct CharArray5  c_bump_ca5(struct CharArray5 v);
+struct Big         c_bump_big(struct Big v);
+
+// arguments after the registers run out
+int c_quad_after_five(int a, int b, int c, int d, int e, struct Quad q, int n);
+float c_vec_after_eight(float a, float b, float c, float d, float e, float f, float g, float h,
+                        struct TwoFloats v, int i);
+
+// scalars C reads and returns as char/bool
+extern char c_next_char(char c);
+extern bool c_not(bool b);
+int c_add(int, int);
+
+// globals defined in C
+extern int c_counter;
+extern float c_scale;
+int c_get_counter();
+
+// ownership: C allocates with malloc, SafeC frees; SafeC allocates, C frees
+own int* c_make_counter(int start);
+void c_destroy(own int* p);
+extern int c_destroyed;
+
+// '...': C reads each argument with va_arg after C's promotions
+int c_check_varargs(int count, ...);
+
+int main() {
+    struct IntCharBool icb = c_bump_icb((struct IntCharBool){ 40, 'a', true });
+    if (icb.x != 41 || icb.c != 'b' || icb.b) return 1;
+    struct ThreeInts i3 = c_bump_i3((struct ThreeInts){ 1, 2, 3 });
+    if (i3.a != 2 || i3.b != 3 || i3.c != 4) return 2;
+    struct TwoFloats f2 = c_bump_f2((struct TwoFloats){ 1.5, -2.5 });
+    if (f2.x != 2.5 || f2.y != -1.5) return 3;
+    struct ThreeFloats f3 = c_bump_f3((struct ThreeFloats){ 1.0, 2.0, 3.0 });
+    if (f3.a != 2.0 || f3.b != 3.0 || f3.c != 4.0) return 4;
+    struct IntFloats iff = c_bump_iff((struct IntFloats){ 7, 0.5, -0.5 });
+    if (iff.a != 8 || iff.b != 1.5 || iff.c != 0.5) return 5;
+    struct CharArray5 ca;
+    ca.s[0] = 'a'; ca.s[1] = 'b'; ca.s[2] = 'c'; ca.s[3] = 'd'; ca.s[4] = 'e';
+    struct CharArray5 cb = c_bump_ca5(ca);
+    if (cb.s[0] != 'b' || cb.s[4] != 'f') return 6;
+    struct Big big = c_bump_big((struct Big){ 1, 2, 3, 4, 5 });
+    if (big.a != 2 || big.c != 4 || big.e != 6) return 7;
+
+    if (c_quad_after_five(1, 2, 3, 4, 5, (struct Quad){ 1, 2, 3, 4 }, 5) != 543225) return 8;
+    if (c_vec_after_eight(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, (struct TwoFloats){ 2.0, 3.0 }, 4) != 4328.0) return 9;
+
+    if (c_next_char(-100) != -99 || c_next_char('y') != 'z') return 10;
+    if (c_not(true) || !c_not(false)) return 11;
+    if (c_add(40, 2) != 42) return 12;
+
+    if (c_counter != 41 || c_scale != 2.5) return 13;
+    c_counter = c_counter + 1;                  // C sees SafeC's write
+    if (c_get_counter() != 42) return 14;
+
+    own int* from_c = c_make_counter(9);
+    int value = *from_c;
+    free(from_c);                               // malloc'd by C, freed by SafeC
+    if (value != 9) return 15;
+    own int* from_safec = new int;
+    *from_safec = 5;
+    c_destroy(from_safec);                      // new'd by SafeC, freed by C
+    if (c_destroyed != 5) return 16;
+
+    char c = -5;
+    bool b = true;
+    float f = 2.5;
+    int bad = c_check_varargs(5, c, b, f, 7, "ok");
+    if (bad != 0) return 16 + bad;              // 17..21: which argument arrived wrong
+    return 0;
+}
