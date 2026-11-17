@@ -1,0 +1,42 @@
+// Ownership and borrows across calls to C functions (declared, not defined).
+// The checker trusts the declaration, exactly as for a SafeC function:
+// an own parameter takes the pointer, T* and mut T* borrow it for the call,
+// an own result must be freed. Arguments for '...' (printf) are only read.
+
+extern own int* c_make_counter(int start);    // C hands ownership to SafeC
+extern void c_destroy(own int* p);            // C takes ownership (and frees)
+extern int c_read(int* p);                    // C reads through a borrow
+extern void c_write(mut int* p, int v);       // C writes through a borrow
+extern own int*? c_maybe_make(int start);     // C may return null
+
+void owner_to_c() {
+    own int* p = c_make_counter(1);
+    c_write(p, 2);                // write borrow, ends with the call
+    int v = c_read(p);            // read borrow, ends with the call
+    c_destroy(p);                 // p moves into C: nothing left to free here
+}
+
+void owner_from_c_freed_here() {
+    own int* p = c_make_counter(1);
+    defer free(p);                // SafeC owns it now
+    printf("%d\n", *p);
+}
+
+void printf_only_reads(own int* p) {
+    printf("%p %d\n", p, *p);     // p is read, not moved, by '...'
+    printf("%p\n", p);            // so it can be used again
+    free(p);                      // and freed
+}
+
+void nullable_from_c() {
+    own int*? maybe = c_maybe_make(3);
+    if (maybe != null) {
+        c_destroy(maybe);         // narrowed to own int*, then moved into C
+    }
+}
+
+void borrow_of_local_to_c() {
+    int x = 5;
+    c_write(&mut x, 6);           // &mut x lasts for the call
+    printf("%d\n", c_read(&x));
+}
