@@ -277,7 +277,7 @@ static bool run_clang(const std::vector<std::string> &cmd, const std::string &wh
 }
 
 // Writes the program's LLVM IR to path. Returns false (after reporting why) on failure
-static bool write_ir(const safec::Program &prog, const char *file, const std::string &path) {
+static bool write_ir(const safec::Program &prog, const char *file, const std::string &path, bool debug_info) {
     {
         safec::DiagnosticsEngine cg_diag(file);   // so sema's warnings aren't printed twice
         if (!safec::CodeGen::check_reserved_names(prog, cg_diag)) {
@@ -295,6 +295,7 @@ static bool write_ir(const safec::Program &prog, const char *file, const std::st
     // codegen throws only on programs sema should have rejected: a compiler bug
     try {
         safec::CodeGen cg(out);
+        if (debug_info) cg.enable_debug_info(file);   // -g
         cg.generate(prog);
     } catch (const std::exception &e) {
         out.close();
@@ -358,11 +359,13 @@ int main(int argc, char **argv) {
     }
 
     // ---- 4. Codegen: LLVM IR, kept only when it is what was asked for
+    bool debug_info = false;                    // -g: DWARF for gdb/lldb
+    for (const std::string &f : opt.clang_flags) debug_info = debug_info || f == "-g";
     if (opt.till == CODEGEN) {
         std::string ir_path = opt.output.empty() ? strip_extension(file) + ".ll" : opt.output;
         std::string level = optimization_level(opt);
         if (level.empty()) {                    // the IR exactly as codegen made it
-            if (!write_ir(prog, file, ir_path)) return 1;
+            if (!write_ir(prog, file, ir_path, debug_info)) return 1;
             std::printf("OK: Successfully emitted %s\n", ir_path.c_str());
             return 0;
         }
@@ -370,7 +373,7 @@ int main(int argc, char **argv) {
         // (run by clang, as for a binary) writes the optimized IR
         TempFile unoptimized;
         if (!make_temp_file(unoptimized, ".ll")) return 1;
-        if (!write_ir(prog, file, unoptimized.path)) return 1;
+        if (!write_ir(prog, file, unoptimized.path, debug_info)) return 1;
         if (!run_clang({"clang", "-S", "-emit-llvm", level, unoptimized.path, "-o", ir_path},
                        "optimizing the IR into " + ir_path))
             return 1;
@@ -380,7 +383,7 @@ int main(int argc, char **argv) {
 
     TempFile ir;
     if (!make_temp_file(ir, ".ll")) return 1;
-    if (!write_ir(prog, file, ir.path)) return 1;
+    if (!write_ir(prog, file, ir.path, debug_info)) return 1;
 
     // ---- 5. clang: object file (-c) or linked executable
     std::string target = !opt.output.empty() ? opt.output
