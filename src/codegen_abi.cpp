@@ -125,13 +125,48 @@ AbiArg CodeGen::classify_small_struct(const Type* t, uint64_t size, int& need_in
 }
 
 // A scalar or array parameter / return value: passed as itself
-AbiArg CodeGen::classify_scalar(const Type* t) const {
+AbiArg CodeGen::classify_scalar(const Type* t, bool is_return) const {
     AbiArg arg;
     arg.kind = AbiArg::Direct;
     arg.ir_type = isa<ArrayType>(t) ? "ptr" : llvm_type(t);   // arrays: pointer to the first element
     if (arg.ir_type == "i8") arg.attr = "signext";             // C's char is signed
     if (arg.ir_type == "i1") arg.attr = "zeroext";             // and _Bool is 0 or 1
+    if (auto* pt = dyn_cast<PointerType>(t)) arg.attr = pointer_attrs(pt, is_return);
     return arg;
+}
+
+// What the type system proves about a safe pointer, told to LLVM so it can
+// optimize with it (the facts C compilers have to guess):
+//   T*, mut T*   nonnull dereferenceable(sizeof T): a borrow points to a live
+//                object, which can't be freed while it is borrowed
+//   own T*       nonnull (not dereferenceable: the callee may free it)
+//   mut T*, own  noalias: a write borrow is exclusive and an owner unique, so
+//                nothing else reaches the object during the call
+//   T*?          the same, with dereferenceable_or_null instead of nonnull
+// Read borrows get no readonly/noalias: trusted code may write through a T*.
+// raw T* gets nothing. noalias relies on trusted code not creating aliases to
+// a borrowed or owned object (the whitepaper's contract for trusted, 3.6.3).
+// A returned own T* is nonnull (borrows can't be returned).
+std::string CodeGen::pointer_attrs(const PointerType* pt, bool is_return) const {
+    if (pt->ptrKind() == PtrKind::Raw) return "";
+    bool nullable = pt->isNullable();
+    bool borrow = pt->ptrKind() == PtrKind::Borrow || pt->ptrKind() == PtrKind::MutBorrow;
+    if (is_return) return nullable ? "" : "nonnull";
+
+    std::vector<std::string> attrs;
+    uint64_t size = 0, align = 0;
+    if (borrow) type_layout(pt->pointee(), size, align);
+    if (borrow && size > 0) {
+        if (nullable) attrs.push_back("dereferenceable_or_null(" + std::to_string(size) + ")");
+        else attrs.push_back("nonnull dereferenceable(" + std::to_string(size) + ")");
+    } else if (!nullable) {
+        attrs.push_back("nonnull");
+    }
+    if (pt->ptrKind() == PtrKind::MutBorrow || pt->ptrKind() == PtrKind::Own) attrs.push_back("noalias");
+
+    std::string s;
+    for (size_t i = 0; i < attrs.size(); ++i) s += (i ? " " : "") + attrs[i];
+    return s;
 }
 
 AbiSignature CodeGen::classify_signature(const FunctionType* ft) const {
@@ -153,7 +188,7 @@ AbiSignature CodeGen::classify_signature(const FunctionType* ft) const {
             sig.ret = classify_small_struct(ret, size, ni, ns);
         }
     } else {
-        sig.ret = classify_scalar(ret);
+        sig.ret = classify_scalar(ret, /*is_return=*/true);
     }
 
     for (const Type* pt : ft->params()) {

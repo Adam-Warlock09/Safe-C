@@ -155,6 +155,11 @@ SafeC follows C's arithmetic behaviour:
   overflow of `+`, `-`, `*`, unary `-`, `++`, `--` and `op=`; division or remainder by zero; `INT_MIN / -1`;
   and shifting by a negative amount or by 32 or more. `char` arithmetic is done in `int`, so `char` results
   wrap when stored back. Inside `trusted` nothing is checked and overflow wraps around.
+- These checks cost little in most code, but in a tight loop of integer arithmetic they can make it
+  much slower than C (the `collatz` benchmark in `tests/bench` runs at about 180% of C's time). To get
+  C's speed in such a loop, put it inside a `trusted` block: its arithmetic then wraps on overflow
+  instead of stopping the program (`collatz` drops to about 94%). Use it only where overflow can't
+  happen or wrapping is acceptable; the rest of the program stays checked.
 
 Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`, `codegen/pass/arith_checks_boundaries`,
 `codegen/pass/trap_*` (programs that must be stopped, marked `// expect-trap`).
@@ -558,6 +563,17 @@ The test passes only if:
 - No unexpected errors or warnings are reported.
 
 ---
+
+### Benchmarks
+
+```bash
+bash tests/bench/run_bench.sh
+```
+
+Times each program in `tests/bench/` written in SafeC and as ordinary C, both
+built with `-O2`, and reports SafeC's time as a percentage of C's (the
+whitepaper's target is within 10%). Not part of `make test`, since timings
+depend on the machine.
 
 ## Additional Testing
 

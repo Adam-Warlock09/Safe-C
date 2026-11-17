@@ -139,7 +139,8 @@ private:
     struct ScalarSlotInfo { uint64_t offset; uint64_t size; bool is_float; bool is_pointer; };
     void type_layout(const Type* t, uint64_t& size, uint64_t& align) const;
     void collect_struct_scalars(const Type* t, uint64_t offset, std::vector<ScalarSlotInfo>& out) const;
-    AbiArg classify_scalar(const Type* t) const;
+    AbiArg classify_scalar(const Type* t, bool is_return = false) const;
+    std::string pointer_attrs(const PointerType* pt, bool is_return) const;
     AbiArg classify_small_struct(const Type* t, uint64_t size, int& need_int, int& need_sse) const;
     AbiSignature classify_signature(const FunctionType* ft) const;
     std::string abi_return_type(const AbiSignature& sig) const;

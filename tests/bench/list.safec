@@ -1,0 +1,32 @@
+// A linked list: new/free for every node, and traversals chasing pointers.
+struct Node { int value; own struct Node*? next; };
+int sum(struct Node*? head) {
+    int s = 0;
+    struct Node*? cur = head;
+    while (cur != null) { s = (s + cur->value) % 1000003; cur = cur->next; }
+    return s;
+}
+void free_all(own struct Node*? cur) {
+    while (cur != null) {
+        own struct Node* n = cur;
+        cur = n->next;
+        n->next = null;
+        free(n);
+    }
+}
+int main() {
+    int total = 0;
+    for (int round = 0; round < 6; round++) {
+        own struct Node*? head = null;
+        for (int i = 0; i < 500000; i++) {
+            own struct Node* n = new struct Node;
+            n->value = i;
+            n->next = head;
+            head = n;
+        }
+        for (int k = 0; k < 10; k++) { total = (total + sum(head)) % 1000003; }
+        free_all(head);
+    }
+    printf("%d\n", total);
+    return 0;
+}
