@@ -1,0 +1,39 @@
+// Demo 10: C calling SafeC: a SafeC library inside a C program.
+//
+// This file has no main. It is compiled to an object file and linked into the
+// C program 10_c_calls_safec.c (whitepaper section 4.6: adopt SafeC one
+// module at a time):
+//   safec -c 10_c_calls_safec.safec -o stats.o
+//   clang 10_c_calls_safec.c stats.o -o demo
+// The C program passes structs by value, as it would to C code. Inside, the
+// SafeC code keeps its checks: a bad bin index would stop the program instead
+// of corrupting memory.
+// demo: run
+
+struct Stats {
+    int count;
+    int total;
+    int min;
+    int max;
+};
+
+struct Histogram {
+    int bins[5];
+};
+
+struct Stats stats_add(struct Stats s, int value) {
+    if (s.count == 0 || value < s.min) { s.min = value; }
+    if (s.count == 0 || value > s.max) { s.max = value; }
+    s.count = s.count + 1;
+    s.total = s.total + value;
+    return s;
+}
+
+int stats_mean(struct Stats s) {
+    return s.total / s.count;              // count 0 would stop the program
+}
+
+void histogram_add(mut struct Histogram* h, int value) {
+    int bin = value / 20;                  // 0..99 -> bins 0..4, checked
+    h->bins[bin] = h->bins[bin] + 1;
+}

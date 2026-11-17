@@ -1,0 +1,23 @@
+// printf is built in (no declaration), and what it prints is checked against
+// printf_output.stdout. '...' arguments are widened as in C: char and bool
+// to int, float to double.
+
+int main() {
+    printf("hello, world\n");
+    printf("%d %d %d\n", 42, -7, 2147483647);
+    char c = 'S';
+    printf("%c%c %d\n", c, 'C', c);         // a char prints as a character or its code
+    bool yes = true;
+    bool no = false;
+    printf("%d %d\n", yes, no);             // bools print as 1 and 0
+    float f = 2.5;
+    printf("%f %.1f %.3f\n", f, f * 2.0, -f);
+    printf("%s and %s\n", "a literal", "another");
+    char word[6];
+    word[0] = 'a'; word[1] = 'r'; word[2] = 'r'; word[3] = 'a'; word[4] = 'y'; word[5] = '\0';
+    printf("%s has %d letters\n", word, 5);   // a char array is passed as a pointer
+    printf("100%%\n");
+    int printed = printf("%d\n", 12345);   // printf returns how many characters it wrote
+    printf("%d\n", printed);
+    return 0;
+}

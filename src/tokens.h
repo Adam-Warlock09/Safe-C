@@ -84,6 +84,8 @@ typedef enum {
     RIGHT_PAREN,
     LEFT_BRACKET,
     RIGHT_BRACKET,
-    DOT
+    DOT,
+
+    EXTERN_KEYWORD      
 
 } TokenType;

@@ -24,12 +24,16 @@ bool CodeGen::check_reserved_names(const Program& prog, DiagnosticsEngine& diag)
 void CodeGen::generate(const Program& prog) {
     prog_ = &prog;
 
+    if (debug_) debug_begin_module();   // the file and compile unit the rest refers to
     emit_module_header();
 
-    // Iterate over all declarations looking for Functions with bodies
+    // Each definition, and a declare for each function defined elsewhere (in C,
+    // like printf). A function declared several times is declared once, by the
+    // declaration sema made canonical, and not at all if it is defined here
     for (const auto& d : prog_->decls) {
         if (auto* fn = dyn_cast<FunctionDecl>(d.get())) {
             if (fn->body) gen_function(*fn);
+            else if (fn->canonical == fn) emit_declare(*fn);
         }
     }
 
@@ -53,6 +57,8 @@ void CodeGen::generate(const Program& prog) {
         }
         out_ << "\\00\"\n";
     }
+
+    if (debug_) debug_end_module();
 }
 
 void CodeGen::gen_function(const FunctionDecl& fn) {
@@ -71,8 +77,9 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
     // Parameters arrive the way the C calling convention passes them
     std::vector<std::string> arg_names;
     for (const auto& p : fn.params) arg_names.push_back("%" + p->name + ".arg");
+    std::string dbg_attachment = debug_ ? debug_begin_function(fn) : "";
     out_ << "\ndefine " << abi_return_type(current_abi_) << " @" << fn.name << "("
-         << abi_param_list(current_abi_, fn.functionType(), &arg_names) << ") {\n";
+         << abi_param_list(current_abi_, fn.functionType(), &arg_names) << ")" << dbg_attachment << " {\n";
 
     emit_label("entry");
     push_scope();
@@ -106,6 +113,8 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
         }
         scopes_.back().vars[p->name] = {addr, p->type};
         local_addr_[p] = addr;
+        // an array parameter's addr is the incoming pointer, not a slot holding it
+        debug_declare_var(p, addr, static_cast<int>(i) + 1, /*by_value=*/isa<ArrayType>(p->type));
     }
 
     emit_entry_allocas(fn.body.get());
@@ -126,6 +135,7 @@ void CodeGen::gen_function(const FunctionDecl& fn) {
 
     out_ << entry_ir << temp_allocas_.str() << "  br label %body\n"
          << body_ir_.str() << "}\n";
+    if (debug_) debug_end_function();
 }
 
 // A stack slot of type t in the entry block, for a value that has no address
@@ -175,15 +185,22 @@ void CodeGen::emit_entry_allocas(const Stmt* s) {
 }
 
 void CodeGen::gen_compound_stmt(const CompoundStmt* cs, bool push_new_scope) {
-    if (push_new_scope) push_scope();
+    if (push_new_scope) {
+        push_scope();
+        debug_push_block(cs->loc.line);
+    }
     for (const auto& stmt : cs->body) {
         gen_stmt(stmt.get());
     }
-    if (push_new_scope) pop_scope_and_emit_defers();
+    if (push_new_scope) {
+        pop_scope_and_emit_defers();
+        debug_pop_block();
+    }
 }
 
 void CodeGen::gen_stmt(const Stmt* s) {
     if (block_terminated_ || !s) return;
+    debug_set_line(s->loc.line);      // -g: the instructions below come from this line
     
     if (auto* expr_stmt = dyn_cast<ExprStmt>(s)) {
         // Intercept FreeExpr since it is technically an expression in the AST
@@ -201,6 +218,7 @@ void CodeGen::gen_stmt(const Stmt* s) {
         for (const auto& vd : decls->decls) {
             std::string addr = local_addr_.at(vd.get());
             scopes_.back().vars[vd->name] = {addr, vd->type};
+            debug_declare_var(vd.get(), addr, 0);
             if (vd->init) {
                 std::string rhs = gen_expr(vd->init.get());
                 emit("store " + llvm_type(vd->type) + " " + rhs + ", ptr " + addr);
@@ -273,6 +291,7 @@ void CodeGen::gen_stmt(const Stmt* s) {
         trusted_depth_--;
     } else if (auto* fs = dyn_cast<ForStmt>(s)) {
         push_scope(); 
+        debug_push_block(fs->loc.line);   // the loop variable belongs to the loop
         if (fs->init) gen_stmt(fs->init.get());
 
         std::string lbl_cond = new_label("for.cond");
@@ -300,6 +319,7 @@ void CodeGen::gen_stmt(const Stmt* s) {
 
         emit_label(lbl_end);
         pop_scope_and_emit_defers(); 
+        debug_pop_block();
     } else if (auto* sw = dyn_cast<SwitchStmt>(s)) {
         // Compare as int: sema doesn't convert case values to the condition's type,
         // so a char switch can have int cases (and sema checks them as int values)
@@ -325,12 +345,12 @@ void CodeGen::gen_stmt(const Stmt* s) {
         }
         
         // Emit the LLVM switch terminator instruction
-        emit("switch " + cond_type + " " + cond_val + ", label %" + default_lbl + " [");
+        // one instruction over several lines (a debug location goes after the ']')
+        std::string switch_ir = "switch " + cond_type + " " + cond_val + ", label %" + default_lbl + " [\n";
         for (const auto& c : case_vals_and_labels) {
-            body_ir_ << "    " << cond_type << " " << c.first << ", label %" << c.second << "\n";
+            switch_ir += "    " + cond_type + " " + c.first + ", label %" + c.second + "\n";
         }
-        body_ir_ << "  ]\n";
-        block_terminated_ = true;
+        emit_terminator(switch_ir + "  ]");
         
         // Pass 2: Emit the bodies sequentially (supporting C-style fallthrough)
         push_scope(true, lbl_end, ""); 

@@ -1,0 +1,29 @@
+// Matrix multiply through struct pointers: out is a write borrow, so SafeC
+// knows it doesn't overlap a or b; C (without restrict) doesn't.
+struct Mat { float m[64][64]; };
+struct Mat a;
+struct Mat b;
+struct Mat c;
+void mul(mut struct Mat* out, struct Mat* x, struct Mat* y) {
+    for (int i = 0; i < 64; i++) {
+        for (int j = 0; j < 64; j++) {
+            out->m[i][j] = 0.0;
+            for (int k = 0; k < 64; k++) {
+                out->m[i][j] = out->m[i][j] + x->m[i][k] * y->m[k][j];
+            }
+        }
+    }
+}
+int main() {
+    for (int i = 0; i < 64; i++) {
+        for (int j = 0; j < 64; j++) {
+            a.m[i][j] = (i + j) % 7 * 0.125;
+            b.m[i][j] = (i * j) % 5 * 0.25;
+        }
+    }
+    for (int r = 0; r < 1500; r++) { mul(&mut c, &a, &b); }
+    float check = 0.0;
+    for (int i = 0; i < 64; i++) { check = check + c.m[i][i]; }
+    printf("%.3f\n", check);
+    return 0;
+}

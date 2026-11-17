@@ -48,6 +48,8 @@ public:
     explicit CodeGen(std::ostream& out) : out_(out) {}
     // Rejects programs sema accepts but codegen can't build; run before generate
     static bool check_reserved_names(const Program& prog, DiagnosticsEngine& diag);
+    // -g: also emit DWARF debug info for the program in source_path
+    void enable_debug_info(const std::string& source_path);
     void generate(const Program& tu);
 
 private:
@@ -84,8 +86,9 @@ private:
     // --- Shared Emission Helpers ---
     std::string new_temp() { return "%t" + std::to_string(++temp_counter_); }
     std::string new_label(const std::string& pfx) { return pfx + "." + std::to_string(++label_counter_); }
+    // With -g every instruction carries its source location (current_dbg_)
     void emit(const std::string& instr) {
-        if (!block_terminated_) body_ir_ << "  " << instr << "\n";
+        if (!block_terminated_) body_ir_ << "  " << instr << current_dbg_ << "\n";
     }
     void emit_label(const std::string& lbl) {
         body_ir_ << lbl << ":\n";
@@ -94,7 +97,7 @@ private:
     }
     void emit_terminator(const std::string& instr) {
         if (!block_terminated_) {
-            body_ir_ << "  " << instr << "\n";
+            body_ir_ << "  " << instr << current_dbg_ << "\n";
             block_terminated_ = true;
         }
     }
@@ -135,16 +138,46 @@ private:
     void gen_compound_stmt(const CompoundStmt* cs, bool push_new_scope = true);
     void gen_branch_stmt(const Stmt* s);
 
+    // --- Debug info for -g (codegen_debug.cpp) ---
+    bool debug_ = false;
+    std::string debug_file_name_, debug_dir_;
+    std::vector<std::string> debug_nodes_;                  // !N = debug_nodes_[N]
+    std::unordered_map<std::string, int> debug_node_ids_;   // shares identical nodes
+    std::unordered_map<const Type*, int> debug_types_;
+    std::vector<int> debug_globals_;
+    std::set<const VarDecl*> debug_declared_;
+    int debug_file_ = -1, debug_cu_ = -1;
+    int current_subprogram_ = -1;
+    std::vector<int> debug_scopes_;                         // lexical blocks, innermost last
+    std::string current_dbg_;                               // ", !dbg !N" or empty
+    int md(const std::string& body);
+    int md_distinct(const std::string& body);
+    void debug_begin_module();
+    void debug_end_module();
+    int debug_type(const Type* t);
+    std::string debug_global(const VarDecl& vd);
+    std::string debug_begin_function(const FunctionDecl& fn);
+    void debug_end_function();
+    int debug_scope() const;
+    void debug_set_line(int line);
+    void debug_push_block(int line);
+    void debug_pop_block();
+    void debug_declare_var(const VarDecl* vd, const std::string& addr, int arg_no, bool by_value = false);
+
     // --- C calling convention (codegen_abi.cpp) ---
     struct ScalarSlotInfo { uint64_t offset; uint64_t size; bool is_float; bool is_pointer; };
     void type_layout(const Type* t, uint64_t& size, uint64_t& align) const;
     void collect_struct_scalars(const Type* t, uint64_t offset, std::vector<ScalarSlotInfo>& out) const;
-    AbiArg classify_scalar(const Type* t) const;
+    AbiArg classify_scalar(const Type* t, bool is_return = false) const;
+    std::string pointer_attrs(const PointerType* pt, bool is_return) const;
     AbiArg classify_small_struct(const Type* t, uint64_t size, int& need_int, int& need_sse) const;
     AbiSignature classify_signature(const FunctionType* ft) const;
     std::string abi_return_type(const AbiSignature& sig) const;
     std::string abi_param_list(const AbiSignature& sig, const FunctionType* ft,
                                const std::vector<std::string>* names) const;
+    std::string abi_param_types(const AbiSignature& sig) const;
+    void emit_declare(const FunctionDecl& fn);
+    std::string promote_variadic_arg(const Type* t, const std::string& val);
     std::string temp_alloca_ir(const std::string& ir_type);
     std::vector<std::string> split_for_abi(const AbiArg& a, const Type* t, const std::string& val);
     std::string join_from_abi(const AbiArg& a, const std::vector<std::string>& pieces);

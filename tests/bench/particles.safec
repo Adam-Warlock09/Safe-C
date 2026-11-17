@@ -1,0 +1,25 @@
+// Particles: float structs passed by value, updated through write borrows.
+struct Vec2 { float x; float y; };
+struct Particle { struct Vec2 pos; struct Vec2 vel; };
+struct Particle ps[4096];
+struct Vec2 add(struct Vec2 a, struct Vec2 b) { return (struct Vec2){ a.x + b.x, a.y + b.y }; }
+struct Vec2 scale(struct Vec2 a, float k) { return (struct Vec2){ a.x * k, a.y * k }; }
+void step(mut struct Particle* p, struct Vec2 gravity, float dt) {
+    p->vel = add(p->vel, scale(gravity, dt));
+    p->pos = add(p->pos, scale(p->vel, dt));
+    if (p->pos.y < 0.0) { p->pos.y = -p->pos.y; p->vel.y = -p->vel.y * 0.5; }
+}
+int main() {
+    for (int i = 0; i < 4096; i++) {
+        ps[i].pos = (struct Vec2){ i * 0.25, 100.0 };
+        ps[i].vel = (struct Vec2){ 1.0, 0.0 };
+    }
+    struct Vec2 gravity = (struct Vec2){ 0.0, -9.8 };
+    for (int t = 0; t < 50000; t++) {
+        for (int i = 0; i < 4096; i++) { step(&mut ps[i], gravity, 0.001); }
+    }
+    float check = 0.0;
+    for (int i = 0; i < 4096; i++) { check = check + ps[i].pos.x + ps[i].pos.y; }
+    printf("%.1f\n", check);
+    return 0;
+}

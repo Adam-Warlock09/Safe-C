@@ -125,13 +125,48 @@ AbiArg CodeGen::classify_small_struct(const Type* t, uint64_t size, int& need_in
 }
 
 // A scalar or array parameter / return value: passed as itself
-AbiArg CodeGen::classify_scalar(const Type* t) const {
+AbiArg CodeGen::classify_scalar(const Type* t, bool is_return) const {
     AbiArg arg;
     arg.kind = AbiArg::Direct;
     arg.ir_type = isa<ArrayType>(t) ? "ptr" : llvm_type(t);   // arrays: pointer to the first element
     if (arg.ir_type == "i8") arg.attr = "signext";             // C's char is signed
     if (arg.ir_type == "i1") arg.attr = "zeroext";             // and _Bool is 0 or 1
+    if (auto* pt = dyn_cast<PointerType>(t)) arg.attr = pointer_attrs(pt, is_return);
     return arg;
+}
+
+// What the type system proves about a safe pointer, told to LLVM so it can
+// optimize with it (the facts C compilers have to guess):
+//   T*, mut T*   nonnull dereferenceable(sizeof T): a borrow points to a live
+//                object, which can't be freed while it is borrowed
+//   own T*       nonnull (not dereferenceable: the callee may free it)
+//   mut T*, own  noalias: a write borrow is exclusive and an owner unique, so
+//                nothing else reaches the object during the call
+//   T*?          the same, with dereferenceable_or_null instead of nonnull
+// Read borrows get no readonly/noalias: trusted code may write through a T*.
+// raw T* gets nothing. noalias relies on trusted code not creating aliases to
+// a borrowed or owned object (the whitepaper's contract for trusted, 3.6.3).
+// A returned own T* is nonnull (borrows can't be returned).
+std::string CodeGen::pointer_attrs(const PointerType* pt, bool is_return) const {
+    if (pt->ptrKind() == PtrKind::Raw) return "";
+    bool nullable = pt->isNullable();
+    bool borrow = pt->ptrKind() == PtrKind::Borrow || pt->ptrKind() == PtrKind::MutBorrow;
+    if (is_return) return nullable ? "" : "nonnull";
+
+    std::vector<std::string> attrs;
+    uint64_t size = 0, align = 0;
+    if (borrow) type_layout(pt->pointee(), size, align);
+    if (borrow && size > 0) {
+        if (nullable) attrs.push_back("dereferenceable_or_null(" + std::to_string(size) + ")");
+        else attrs.push_back("nonnull dereferenceable(" + std::to_string(size) + ")");
+    } else if (!nullable) {
+        attrs.push_back("nonnull");
+    }
+    if (pt->ptrKind() == PtrKind::MutBorrow || pt->ptrKind() == PtrKind::Own) attrs.push_back("noalias");
+
+    std::string s;
+    for (size_t i = 0; i < attrs.size(); ++i) s += (i ? " " : "") + attrs[i];
+    return s;
 }
 
 AbiSignature CodeGen::classify_signature(const FunctionType* ft) const {
@@ -153,7 +188,7 @@ AbiSignature CodeGen::classify_signature(const FunctionType* ft) const {
             sig.ret = classify_small_struct(ret, size, ni, ns);
         }
     } else {
-        sig.ret = classify_scalar(ret);
+        sig.ret = classify_scalar(ret, /*is_return=*/true);
     }
 
     for (const Type* pt : ft->params()) {
@@ -245,6 +280,49 @@ std::string CodeGen::abi_param_list(const AbiSignature& sig, const FunctionType*
     return s;
 }
 
+// The IR types of the parameter list, without names or attributes: the
+// function type a variadic call has to spell out
+std::string CodeGen::abi_param_types(const AbiSignature& sig) const {
+    std::vector<std::string> types;
+    if (sig.ret.kind == AbiArg::Indirect) types.push_back("ptr");
+    for (const AbiArg& a : sig.params) {
+        switch (a.kind) {
+            case AbiArg::Direct:   types.push_back(a.ir_type); break;
+            case AbiArg::Coerce:   types.insert(types.end(), a.parts.begin(), a.parts.end()); break;
+            case AbiArg::Indirect: types.push_back("ptr"); break;
+            case AbiArg::Ignore:   break;
+        }
+    }
+    std::string s;
+    for (size_t i = 0; i < types.size(); ++i) s += (i ? ", " : "") + types[i];
+    return s;
+}
+
+// declare for a function defined elsewhere (in C): the same lowering as a
+// definition, so C's calling convention matches on both sides
+void CodeGen::emit_declare(const FunctionDecl& fn) {
+    const FunctionType* ft = fn.functionType();
+    AbiSignature sig = classify_signature(ft);
+    std::string params = abi_param_list(sig, ft, nullptr);
+    if (ft->isVariadic()) params += params.empty() ? "..." : ", ...";
+    out_ << "\ndeclare " << abi_return_type(sig) << " @" << fn.name << "(" << params << ")\n";
+}
+
+// An argument for '...', passed the way C passes it: char and bool widened to
+// int, float to double. Arrays (already a pointer to their first element),
+// pointers and null are pointers
+std::string CodeGen::promote_variadic_arg(const Type* t, const std::string& val) {
+    if (isa<ArrayType>(t)) return "ptr " + val;
+    std::string ty = llvm_type(t);
+    if (ty == "i1" || ty == "i8") return "i32 " + convert_int(val, ty, "i32");   // bool: zext, char: sext
+    if (ty == "float") {
+        std::string wide = new_temp();
+        emit(wide + " = fpext float " + val + " to double");
+        return "double " + wide;
+    }
+    return ty + " " + val;
+}
+
 // A stack slot of an ABI type (always 8-aligned: enough for every coerced
 // type and every SafeC struct)
 std::string CodeGen::temp_alloca_ir(const std::string& ir_type) {
@@ -334,9 +412,13 @@ std::string CodeGen::gen_call(const CallExpr* c) {
     // Arguments are evaluated left to right, each converted right after
     for (size_t i = 0; i < c->args.size(); ++i) {
         const Expr* arg = c->args[i].get();
+        std::string val = gen_expr(arg);
+        if (i >= ft->params().size()) {            // matches '...'
+            args.push_back(promote_variadic_arg(arg->type, val));
+            continue;
+        }
         const Type* pt = ft->params()[i];
         const AbiArg& a = sig.params[i];
-        std::string val = gen_expr(arg);
         switch (a.kind) {
             case AbiArg::Direct:
                 args.push_back(a.ir_type + (a.attr.empty() ? "" : " " + a.attr) + " " + val);
@@ -357,7 +439,14 @@ std::string CodeGen::gen_call(const CallExpr* c) {
         }
     }
 
-    std::string call = "call " + abi_return_type(sig) + " @" + fd->name + "(";
+    // A variadic call names the function type, "i32 (ptr, ...)": on x86-64 the
+    // callee is told how many float registers carry arguments only then
+    std::string fn_type;
+    if (ft->isVariadic()) {
+        std::string fixed = abi_param_types(sig);
+        fn_type = " (" + fixed + (fixed.empty() ? "..." : ", ...") + ")";
+    }
+    std::string call = "call " + abi_return_type(sig) + fn_type + " @" + fd->name + "(";
     for (size_t i = 0; i < args.size(); ++i) call += (i ? ", " : "") + args[i];
     call += ")";
 

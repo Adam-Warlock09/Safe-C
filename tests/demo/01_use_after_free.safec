@@ -1,0 +1,23 @@
+// Demo 1: use after free and double free are caught at compile time.
+//
+// In C this program compiles without a warning, then reads freed memory and
+// frees the same block twice: undefined behaviour, a classic security hole.
+// In SafeC every heap block has exactly one `own` pointer. Assigning it moves
+// ownership, and the old name can't be used any more.
+// demo: compile-error
+
+struct Account {
+    int balance;
+};
+
+int main() {
+    own struct Account* acc = new struct Account;
+    acc->balance = 100;
+
+    own struct Account* backup = acc;     // ownership moves from acc to backup
+    printf("%d\n", acc->balance);         // error: acc no longer owns anything
+
+    free(backup);
+    free(backup);                         // error: freed twice
+    return 0;
+}

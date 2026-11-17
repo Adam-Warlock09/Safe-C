@@ -1,0 +1,16 @@
+#include <stdio.h>
+int steps(int n) {
+    int count = 0;
+    while (n != 1) {
+        if (n % 2 == 0) n = n / 2; else n = 3 * n + 1;
+        count++;
+    }
+    return count;
+}
+int main(void) {
+    int total = 0;
+    for (int round = 0; round < 15; round++)
+        for (int n = 1; n < 100000; n++) total = (total + steps(n)) % 1000000007;
+    printf("%d\n", total);
+    return 0;
+}

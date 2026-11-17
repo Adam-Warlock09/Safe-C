@@ -75,6 +75,10 @@ namespace safec {
             std::unordered_map<std::string_view, FunctionDecl*> funs;
             std::unordered_map<std::string_view, StructDecl*> structs;
 
+            // A later declaration of a function or global and the one before it:
+            // their types must match, checked once types are resolved
+            std::vector<std::pair<ValueDecl*, ValueDecl*>> redeclarations;
+
             // Context State
             FunctionDecl* currFun = nullptr;
             bool isTrusted = false; // Tracks if traversal is inside a trusted block
@@ -87,7 +91,9 @@ namespace safec {
             const Type* resolveType(TypeSpec* spec, Program& prog, bool isParam = false);
 
             // Phase 2 : Structural Passes
+            void addBuiltins(Program& prog);
             void collectGlobals(Program& prog);
+            void checkRedeclarations();
             void resolveStructFields(Program& prog);
             void resolveSignatures(Program& prog);
             void checkBodies(Program& prog);
@@ -99,6 +105,7 @@ namespace safec {
             // Phases 2-3 : Expression Checking
             void checkAssignment(AssignExpr* expr, TypeContext& types);
             void checkCall(CallExpr* expr, const FunctionType* fnType);
+            void checkVariadicArg(Expr* arg, const std::string& callee);
             void checkNew(NewExpr* expr, const Type* allocatedType, TypeContext& types);
             void checkFreeExpr(FreeExpr* expr, TypeContext& types);
             void checkUnary(UnaryExpr* expr, TypeContext& types);

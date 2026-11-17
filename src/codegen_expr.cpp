@@ -345,12 +345,20 @@ void CodeGen::emit_module_header() {
     out_ << "declare void @llvm.trap()\n\n";
 
     // 3. Emit Globals
+    // A global declared several times (extern declarations) is emitted once,
+    // for its canonical declaration: the definition, or `external` if it is
+    // defined elsewhere (in C)
     for (const auto& d : prog_->decls) {
         if (auto* vd = dyn_cast<VarDecl>(d.get())) {
-            if (vd->isGlobal) {
+            if (vd->isGlobal && vd->canonical == vd) {
                 std::string t = llvm_type(vd->type);
+                if (vd->isExtern) {
+                    out_ << "@" << vd->name << " = external global " << t << "\n";
+                    continue;
+                }
                 std::string init = vd->init ? const_init(vd->init.get()) : llvm_zero_init(vd->type);
-                out_ << "@" << vd->name << " = global " << t << " " << init << "\n";
+                out_ << "@" << vd->name << " = global " << t << " " << init
+                     << (debug_ ? debug_global(*vd) : "") << "\n";
             }
         }
     }

@@ -28,7 +28,7 @@
 #              // error            any error on this line
 #            Case is ignored, and anything after " -- " is just a comment.
 #   codegen  safec --emit-llvm, then LLVM's verifier (opt -passes=verify) on
-#            the IR. pass: exit 0 and the IR verifies. fail: programs that
+#            the IR, with and without debug info (-g). pass: exit 0 and the IR verifies. fail: programs that
 #            pass sema but codegen must reject; nonzero exit, and the
 #            diagnostics match the markers, as in sema.
 #   safec    the same programs, built into an executable with safec and run.
@@ -37,9 +37,11 @@
 #            first check that fails, so exit code 3 means check 3 failed.
 #            "// expect-trap": the program must be stopped by a runtime check
 #            (bounds, overflow, division by zero, ...) instead.
+#            If there is a NAME.stdout, what the program prints must match it.
 #   interop  C and SafeC together: pass/NAME.safec is built with safec -c and
 #            linked with pass/NAME.c, which has main. The program's exit code
-#            must match "// expect-exit: N" in the .c file (0 if none).
+#            must match "// expect-exit: N" in the .c file (0 if none), and
+#            its output NAME.stdout if there is one.
 #   driver   the command line: tests/cases/driver/pass/NAME.sh, run with bash
 #            in an empty temp folder with $SAFEC set to the compiler. Passes
 #            if the script exits 0; what it printed is shown when it fails.
@@ -258,6 +260,15 @@ case_codegen() {   # $1 = pass|fail, $2 = file
         { echo "the generated LLVM IR is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
         return 1
     fi
+    # the same program with debug info (-g): the verifier also checks its rules
+    if ! "$COMPILER" -S -g "$TMP/prog.safec" -o "$TMP/prog_g.ll" > "$TMP/out" 2> "$TMP/err"; then
+        { echo "safec -S -g failed:"; head -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    if ! opt -passes=verify -disable-output "$TMP/prog_g.ll" > "$TMP/verify" 2>&1; then
+        { echo "the LLVM IR with debug info (-g) is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
+        return 1
+    fi
     return 0
 }
 
@@ -271,13 +282,13 @@ case_safec() {   # $1 = pass|fail, $2 = file
         { echo "could not build the program (exit $RC):"; cat "$TMP/out" "$TMP/err" | grep -iE 'error|warning' | head -5; } > "$TMP/why"
         return 1
     fi
-    run_built_program "$2"
+    run_built_program "$2" "${2%.safec}.stdout"
 }
 
 # Runs $TMP/prog and checks its exit code against "// expect-exit: N" in the
 # file (0 if there's no such line). "// expect-trap" means the program must
 # be stopped by a runtime check (llvm.trap: SIGILL on x86-64, SIGTRAP on arm64).
-run_built_program() {   # $1 = the test file with the expect-exit/expect-trap marker
+run_built_program() {   # $1 = the test file with the expect-exit/expect-trap marker, $2 = NAME.stdout
     local want trap=0
     want=$(sed -nE 's#^[[:space:]]*//[[:space:]]*expect-exit:[[:space:]]*([0-9]+).*#\1#p' "$1" | head -1)
     want=${want:-0}
@@ -311,6 +322,19 @@ run_built_program() {   # $1 = the test file with the expect-exit/expect-trap ma
         fi
         return 1
     fi
+    check_stdout "$2"
+}
+
+# What the program printed must match NAME.stdout, if there is one. (A
+# separate name from NAME.expected, which the codegen stage compares with the
+# compiler's own output.) Not checked for expect-trap programs: output still
+# buffered in printf is lost when the trap stops the program.
+check_stdout() {   # $1 = NAME.stdout
+    [ -f "$1" ] || return 0
+    if ! diff -u "$1" "$TMP/out" > "$TMP/diff"; then
+        { echo "the program printed something else than $1:"; head -20 "$TMP/diff"; } > "$TMP/why"
+        return 1
+    fi
     return 0
 }
 
@@ -338,7 +362,7 @@ case_interop() {   # $1 = pass, $2 = .safec file
         { echo "could not link the C program with the SafeC object:"; head -5 "$TMP/err"; } > "$TMP/why"
         return 1
     fi
-    run_built_program "$c_file"
+    run_built_program "$c_file" "${2%.safec}.stdout"
 }
 
 # Driver tests are shell scripts that run the compiler with different command

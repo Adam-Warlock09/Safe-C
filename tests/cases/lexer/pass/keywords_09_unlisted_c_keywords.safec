@@ -12,7 +12,6 @@ int main() {
     int enum = 11;
     int union = 12;
     int inline = 13;
-    int extern = 14;
     int register = 15;
     int restrict = 16;
     int static = 17;

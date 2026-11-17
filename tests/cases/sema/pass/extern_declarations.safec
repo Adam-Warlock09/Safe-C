@@ -1,0 +1,43 @@
+// Declaring functions and globals defined elsewhere (in C), as in C, and the
+// built-in printf.
+
+// A declaration may come before or after the definition, and repeat
+int add(int a, int b);
+int twice(int x) { return add(x, x); }    // calls the definition below
+int add(int a, int b) { return a + b; }
+int add(int, int);                        // parameter names may be left out
+
+// Functions defined in C: called like any other
+extern int c_abs(int);
+int c_sum(int xs[], int n);
+own int* c_make_counter(int start);       // C hands ownership to SafeC
+void c_fill(mut int* out, int value);     // C writes through a borrow
+int c_log(char* fmt, ...);                // variadic, like printf
+
+// printf needs no declaration; repeating its exact prototype is allowed
+int printf(char* fmt, ...);
+
+// Globals: extern declarations may repeat, with at most one definition
+extern int counter;
+extern int counter;
+int counter = 3;
+extern int defined_in_c;
+
+int main() {
+    char c = 'a';
+    bool b = true;
+    float f = 1.5;
+    int a[3];
+    a[0] = 1; a[1] = 2; a[2] = 3;
+    own int* p = c_make_counter(7);
+    c_fill(p, 8);
+
+    // '...' takes numbers, strings, pointers, arrays and null
+    printf("%d %c %d %f %s\n", twice(2), c, b, f, "text");
+    printf("%p %p %p\n", p, a, null);
+    printf("no arguments after the format\n");
+    c_log("%d %d", c_sum(a, 3), defined_in_c);
+
+    free(p);
+    return c_abs(-counter) - 3;
+}

@@ -1,0 +1,27 @@
+// A function or global declared several times is emitted once: a function
+// with a definition here gets no declare, an extern global with a definition
+// here is that definition, and printf's repeated prototype gives one declare.
+// (A second declare or global of the same name would be invalid IR.)
+// Returns the number of the first check that fails, 0 if all pass.
+
+int square(int x);                 // declared before its definition
+int twice(int x) { return square(x) + square(x); }
+extern int square(int);            // and again, extern, unnamed parameter
+int square(int x) { return x * x; }
+int square(int x);                 // and after it
+
+extern int total;                  // extern before the definition...
+extern int total;
+int total = 10;                    // ... which is the global emitted
+extern int total;
+
+int printf(char* fmt, ...);        // the same prototype as the built-in one
+int printf(char* fmt, ...);
+
+int main() {
+    if (twice(3) != 18) return 1;
+    total = total + square(2);
+    if (total != 14) return 2;
+    if (printf("") != 0) return 3;   // printf returns the number of characters written
+    return 0;
+}
