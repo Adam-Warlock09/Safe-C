@@ -1,0 +1,3 @@
+// The program starts at main, so it must be defined in SafeC, not only declared.
+
+int main();        // error: main() is declared but never defined

@@ -16,7 +16,7 @@
 
 %code requires {
 #include "new_ast.h"
-namespace safec { struct DeclParts; }
+namespace safec { struct DeclParts; struct ParamList; }
 }
 
 %{
@@ -36,6 +36,12 @@ struct DeclParts {
     std::vector<PointerLevel> pointers;
     std::vector<ExprPtr> dims;            // nullptr = `[]`
     std::unique_ptr<Expr> init;           // may be null
+};
+
+// a function's parameters, and whether `...` follows them
+struct ParamList {
+    std::vector<ParamDeclPtr> params;
+    bool variadic = false;
 };
 
 // no columns from the lexer yet, so col stays 0
@@ -95,6 +101,7 @@ static DeclStmt *wrapDecl(std::vector<VarDeclPtr> *vars, const SourceLoc &loc) {
     std::vector<DeclParts *>   *partslist;
     std::vector<VarDeclPtr>    *vars;
     std::vector<ParamDeclPtr>  *params;
+    ParamList                  *plist;
     std::vector<FieldDeclPtr>  *fields;
     std::vector<StmtPtr>       *stmts;
     std::vector<ExprPtr>       *exprs;
@@ -179,6 +186,7 @@ static DeclStmt *wrapDecl(std::vector<VarDeclPtr> *vars, const SourceLoc &loc) {
 %token LEFT_BRACKET 74
 %token RIGHT_BRACKET 75
 %token DOT 76
+%token EXTERN_KEYWORD 77
 
 /* dangling-else fix: ELSE binds to the nearest if */
 %token THEN
@@ -210,8 +218,9 @@ static DeclStmt *wrapDecl(std::vector<VarDeclPtr> *vars, const SourceLoc &loc) {
 %type <vars> decl
 %type <strct> struct_def
 %type <fields> fields field
-%type <fn> func_def
-%type <params> params param_list
+%type <fn> func_def func_decl func_header
+%type <plist> params
+%type <params> param_list
 %type <param> param
 %type <block> block
 %type <stmts> items
@@ -245,6 +254,7 @@ program
 external
     : struct_def { prog.decls.push_back(DeclPtr($1)); }
     | func_def   { prog.decls.push_back(DeclPtr($1)); }
+    | func_decl  { prog.decls.push_back(DeclPtr($1)); }
     | decl
       {
         for (VarDeclPtr &v : *$1)
@@ -253,6 +263,19 @@ external
             prog.decls.push_back(std::move(v));
         }
         delete $1;
+      }
+    /* extern, as in C: optional on functions; on a global, it is defined elsewhere */
+    | EXTERN_KEYWORD func_def  { $2->isExtern = true; prog.decls.push_back(DeclPtr($2)); }
+    | EXTERN_KEYWORD func_decl { $2->isExtern = true; prog.decls.push_back(DeclPtr($2)); }
+    | EXTERN_KEYWORD decl
+      {
+        for (VarDeclPtr &v : *$2)
+        {
+            v->isGlobal = true;
+            v->isExtern = true;
+            prog.decls.push_back(std::move(v));
+        }
+        delete $2;
       }
     ;
 
@@ -390,20 +413,50 @@ type_base
     ;
 
 func_def
-    : qual_base ptrs IDENTIFIER LEFT_PAREN params RIGHT_PAREN block
+    : func_header block { $$ = $1; $$->body.reset($2); }
+    ;
+
+/* a function defined elsewhere (in C): the header without a body */
+func_decl
+    : func_header SEMICOLON { $$ = $1; }
+    ;
+
+func_header
+    : qual_base ptrs IDENTIFIER LEFT_PAREN params RIGHT_PAREN
       {
         TypeSpec *ret = $1;
         ret->pointers = std::move(*$2);
         $$ = new FunctionDecl(SL(@3), std::move(*$3), TypeSpecPtr(ret),
-                              std::move(*$5), CompoundStmtPtr($7));
+                              std::move($5->params), nullptr);
+        $$->isVariadic = $5->variadic;
         delete $2; delete $3; delete $5;
       }
     ;
 
 params
-    : %empty     { $$ = new std::vector<ParamDeclPtr>(); }   /* f() */
-    | VOID       { $$ = new std::vector<ParamDeclPtr>(); }   /* f(void) */
-    | param_list { $$ = $1; }
+    : %empty     { $$ = new ParamList(); }                    /* f() */
+    | param_list
+      {
+        $$ = new ParamList();
+        $$->params = std::move(*$1);
+        delete $1;
+        /* f(void): a single unnamed plain `void` means no parameters, as in C.
+           (A separate `VOID` rule would conflict with unnamed parameters.) */
+        if ($$->params.size() == 1) {
+            const ParamDecl *p = $$->params[0].get();
+            const TypeSpec *t = p->typeSpec.get();
+            if (p->name.empty() && t->base == BaseTypeKind::Void && t->qualifier == PtrQualifier::None
+                && t->pointers.empty() && t->arrayDims.empty())
+                $$->params.clear();
+        }
+      }
+    | param_list COMMA ELLIPSIS                                /* printf(char* fmt, ...) */
+      {
+        $$ = new ParamList();
+        $$->params = std::move(*$1);
+        $$->variadic = true;
+        delete $1;
+      }
     ;
 
 param_list
@@ -421,6 +474,14 @@ param
         ts->arrayDims = std::move(*$4);
         $$ = new ParamDecl(SL(@3), std::move(*$3), TypeSpecPtr(ts));
         delete $2; delete $3; delete $4;
+      }
+    | qual_base ptrs arrays   /* unnamed: only allowed without a body (checked by sema) */
+      {
+        TypeSpec *ts = $1;
+        ts->pointers = std::move(*$2);
+        ts->arrayDims = std::move(*$3);
+        $$ = new ParamDecl(SL(@1), std::string(), TypeSpecPtr(ts));
+        delete $2; delete $3;
       }
     ;
 

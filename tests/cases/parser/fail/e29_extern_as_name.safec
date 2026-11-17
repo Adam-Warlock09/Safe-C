@@ -1,0 +1,5 @@
+// extern is a keyword (as in C), so it can't be used as a name
+int main() {
+    int extern = 14;
+    return extern;
+}

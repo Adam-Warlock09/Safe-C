@@ -1,0 +1,2 @@
+// '...' must be the last thing in the parameter list
+int log_two(char* fmt, ..., int last);

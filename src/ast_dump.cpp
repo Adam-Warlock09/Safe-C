@@ -93,8 +93,9 @@ void dumpStmt(const Stmt *s, std::ostream &os, int depth);
 
 void dumpVarDecl(const VarDecl *v, std::ostream &os, int depth) {
     head(os, depth, isa<ParamDecl>(v) ? "param" : "var_decl", v->loc);
-    os << ' ' << v->name;
+    os << ' ' << (v->name.empty() ? "<unnamed>" : v->name);
     if (v->isGlobal && !isa<ParamDecl>(v)) os << " global";
+    if (v->isExtern) os << " extern";
     close(os);
     dumpTypeSpec(v->typeSpec.get(), os, depth + 1);
     for (const ExprPtr &dim : v->typeSpec->arrayDims)
@@ -117,14 +118,17 @@ void dumpStructDecl(const StructDecl *sd, std::ostream &os, int depth) {
 }
 
 void dumpFunctionDecl(const FunctionDecl *fn, std::ostream &os, int depth) {
-    head(os, depth, "func_def", fn->loc);
+    // a declaration without a body is a func_decl
+    head(os, depth, fn->body ? "func_def" : "func_decl", fn->loc);
     os << ' ' << fn->name;
+    if (fn->isExtern) os << " extern";
+    if (fn->isVariadic) os << " variadic";
     close(os);
     dumpTypeSpec(fn->returnSpec.get(), os, depth + 1);
     for (const ExprPtr &dim : fn->returnSpec->arrayDims)
         if (dim) dumpExpr(dim.get(), os, depth + 2);
     for (const auto &p : fn->params) dumpVarDecl(p.get(), os, depth + 1);
-    dumpStmt(fn->body.get(), os, depth + 1);
+    if (fn->body) dumpStmt(fn->body.get(), os, depth + 1);
 }
 
 void dumpDecl(const Decl *d, std::ostream &os, int depth) {

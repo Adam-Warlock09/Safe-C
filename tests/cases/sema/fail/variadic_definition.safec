@@ -1,0 +1,10 @@
+// '...' is only for declaring C functions such as printf. SafeC can't read
+// the extra arguments, so a SafeC function with a body can't be variadic.
+// (Before extern declarations existed, this was a parser error:
+// parser/fail/e20_unsupported_variadic_parameters.)
+
+int sum(int count, ...) {           // error: 'sum' can't be variadic
+    return count;
+}
+
+int printf_like(char* fmt, ...);    // a declaration is fine

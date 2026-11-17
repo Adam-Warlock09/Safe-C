@@ -1,0 +1,30 @@
+// Declarations of the same function or global must agree, a function is
+// defined at most once, printf is built in, and '...' has limits.
+
+struct Pair { int x; int y; };
+void nothing() { }
+
+int add(int a, int b);
+float add(int a, int b);                   // error: conflicting types for 'add'
+int both(int a) { return a; }
+int both(int a) { return a; }              // error: Duplicate global name: 'both'
+
+int printf(char* fmt);                     // error: conflicting types for 'printf'
+int printf(char* fmt, ...) { return 0; }   // error: 'printf' is C's printf, built into SafeC
+
+extern int g = 5;                          // error: extern variable 'g' can't have an initializer
+extern int h;
+float h;                                   // error: conflicting types for 'h'
+int k;
+int k;                                     // error: Duplicate global name: 'k' -- two definitions
+
+int unnamed(int) { return 0; }             // error: a parameter of 'unnamed' has no name
+int dup(int a, int a);                     // error: Duplicate parameter name: 'a'
+
+int main() {
+    struct Pair s = (struct Pair){ 1, 2 };
+    printf();                              // error: call expected at least 1 arguments, but received 0
+    printf("%d", s);                       // error: a struct can't be passed to the '...' of 'printf'
+    printf("%d", nothing());               // error: a void value can't be passed to the '...' of 'printf'
+    return 0;
+}
