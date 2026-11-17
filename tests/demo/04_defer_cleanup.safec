@@ -1,0 +1,38 @@
+// Demo 4: defer runs cleanup code whenever a block is left.
+//
+// `defer free(x);` right after allocating x frees it however the block ends:
+// at the closing brace, on an early return, or on break/continue. Several
+// defers run in reverse order, like closing nested resources.
+// demo: run
+
+int process(int request) {
+    own int* buffer = new int;
+    defer free(buffer);                    // frees buffer on every return below
+    defer printf("  request %d: buffer freed\n", request);
+
+    *buffer = request * 10;
+    if (request < 0) {
+        printf("  request %d: invalid, returning early\n", request);
+        return -1;
+    }
+    printf("  request %d: processed, value %d\n", request, *buffer);
+    return 0;
+}
+
+int main() {
+    printf("a normal request:\n");
+    process(4);
+    printf("a bad request (early return):\n");
+    process(-1);
+
+    printf("a loop, leaving with break:\n");
+    for (int i = 0; i < 10; i++) {
+        own int* item = new int;
+        defer free(item);
+        defer printf("  item %d cleaned up\n", i);
+        if (i == 2) {
+            break;                         // the defers above still run
+        }
+    }
+    return 0;
+}

@@ -1,0 +1,27 @@
+// Demo 3: memory leaks are caught at compile time, on every path.
+//
+// In C a forgotten free(), often on an early error return, compiles fine and
+// leaks memory. In SafeC an owner has to be freed (or handed to another owner)
+// before it goes out of scope, on every path through the function.
+// Demo 4 shows the easy fix: defer.
+// demo: compile-error
+
+int process(int n) {
+    own int* buffer = new int;
+    *buffer = n;
+    if (n < 0) {
+        return -1;                         // error: buffer leaks on this path
+    }
+    free(buffer);
+    return 0;
+}
+
+void forgot_to_free() {
+    own int* scratch = new int;
+    *scratch = 42;
+}                                          // error: scratch leaks here
+
+int main() {
+    new int;                               // error: allocated and immediately lost
+    return process(1);
+}

@@ -1,0 +1,32 @@
+// Demo 2: null pointers can't be dereferenced by accident.
+//
+// In C any pointer may be NULL, and forgetting to check crashes the program.
+// In SafeC a pointer is non-null unless its type says `?`, and a `T*?` must be
+// compared with null before it is used. Inside `if (p != null)` it is a T*.
+// demo: compile-error
+
+struct User {
+    int id;
+};
+
+void greet(struct User* u) {               // a User* is never null: no check needed
+    printf("hello, user %d\n", u->id);
+}
+
+int find_id(struct User*? maybe) {
+    return maybe->id;                      // error: maybe may be null
+}
+
+int find_id_safely(struct User*? maybe) {
+    if (maybe != null) {
+        return maybe->id;                  // fine: checked, so a User* here
+    }
+    return -1;
+}
+
+int main() {
+    struct User*? nobody = null;
+    greet(nobody);                         // error: greet needs a non-null User*
+    struct User* someone = null;           // error: a User* can't be null
+    return 0;
+}

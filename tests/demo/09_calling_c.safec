@@ -1,0 +1,49 @@
+// Demo 9: SafeC calling C: your own C code, the C library and libm.
+//
+// C functions and globals are declared, as in C, and linked by safec:
+//   safec 09_calling_c.safec 09_calling_c.c -lm -o demo
+// Structs pass by value with C's calling convention. A raw pointer from C
+// (here a fake hardware register) is only dereferenced inside `trusted`:
+// the one place the programmer vouches for memory safety (section 3.6).
+// demo: run
+
+struct Point {
+    int x;
+    int y;
+};
+
+// from 09_calling_c.c
+struct Point midpoint(struct Point a, struct Point b);
+extern int requests_served;
+extern raw int* device_register();
+
+// from the C library and the math library
+int puts(char* s);
+int abs(int x);
+float sqrtf(float x);
+
+void write_register(raw int* reg, int command) {
+    trusted {
+        *reg = command;                    // only allowed inside trusted
+    }
+}
+
+int main() {
+    puts("SafeC calling C:");
+    struct Point m = midpoint((struct Point){ 0, 0 }, (struct Point){ 10, 20 });
+    printf("  midpoint (from C)       = (%d, %d)\n", m.x, m.y);
+    printf("  abs(-7) (libc)          = %d\n", abs(-7));
+    printf("  sqrtf(2.0) (libm)       = %.4f\n", sqrtf(2.0));
+
+    requests_served = requests_served + 1;
+    printf("  C global after +1       = %d\n", requests_served);
+
+    raw int* reg = device_register();
+    write_register(reg, 7);
+    int value = 0;
+    trusted {
+        value = *reg;
+    }
+    printf("  device register now     = %d\n", value);
+    return 0;
+}

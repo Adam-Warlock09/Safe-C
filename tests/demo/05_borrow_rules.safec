@@ -1,0 +1,25 @@
+// Demo 5: borrows can't be invalidated while they are in use.
+//
+// In C a pointer into an object stays usable after the object is changed or
+// freed: a dangling pointer. SafeC's rule: many read borrows (T*) or one write
+// borrow (mut T*) at a time, and an owner can't be freed or written while
+// something borrows it. All checked at compile time.
+// demo: compile-error
+
+void add_to(mut int* total, int* amount) {
+    *total = *total + *amount;
+}
+
+int main() {
+    own int* balance = new int;
+    *balance = 100;
+
+    int* reader = balance;                 // a read borrow, until the end of main
+    *balance = 50;                         // error: can't write while it is borrowed
+    free(balance);                         // error: can't free while it is borrowed
+    printf("%d\n", *reader);
+
+    int x = 1;
+    add_to(&mut x, &x);                    // error: x borrowed mutably and for reading at once
+    return 0;
+}

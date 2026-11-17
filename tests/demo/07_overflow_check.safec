@@ -1,0 +1,22 @@
+// Demo 7: integer overflow stops the program instead of giving a wrong answer.
+//
+// In C, signed overflow is undefined behaviour: 13! doesn't fit in an int, and
+// the result is silently wrong (or worse). SafeC stops the program at the
+// multiplication that overflows. Division by zero and bad shifts are stopped
+// the same way. Inside a `trusted` block the checks are off and overflow wraps.
+// demo: trap
+
+int factorial(int n) {
+    int result = 1;
+    for (int i = 2; i <= n; i++) {
+        result = result * i;               // 13! > 2147483647: stopped here
+    }
+    return result;
+}
+
+int main() {
+    for (int n = 10; n <= 15; n++) {
+        printf("%d! = %d\n", n, factorial(n));
+    }
+    return 0;
+}
