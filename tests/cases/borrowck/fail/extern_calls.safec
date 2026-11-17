@@ -1,0 +1,40 @@
+// The same ownership rules hold for C functions as for SafeC ones: a pointer
+// moved into C can't be used again, an owner from C must be freed, and
+// '...' arguments must still be valid to read.
+
+extern own int* c_make_counter(int start);
+extern void c_destroy(own int* p);
+extern int c_read(int* p);
+
+void use_after_moving_into_c() {
+    own int* p = c_make_counter(1);
+    c_destroy(p);                     // p moves into C
+    int v = c_read(p);                // error: use of moved pointer 'p'
+}
+
+void free_after_moving_into_c() {
+    own int* p = c_make_counter(1);
+    c_destroy(p);
+    free(p);                          // error: use of moved pointer 'p'
+}
+
+void owner_from_c_leaked() {
+    own int* p = c_make_counter(1);
+}                                     // error: 'p' is leaked
+
+void result_from_c_discarded() {
+    c_make_counter(1);                // error: is leaked: it is never freed or stored
+}
+
+void printf_after_move() {
+    own int* p = c_make_counter(1);
+    own int* q = p;
+    printf("%d\n", *p);               // error: use of moved pointer 'p'
+    free(q);
+}
+
+void printf_after_free() {
+    own int* p = c_make_counter(1);
+    free(p);
+    printf("%p\n", p);                // error: use of 'p' after free
+}
