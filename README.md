@@ -159,6 +159,53 @@ SafeC follows C's arithmetic behaviour:
 Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`, `codegen/pass/arith_checks_boundaries`,
 `codegen/pass/trap_*` (programs that must be stopped, marked `// expect-trap`).
 
+### 8. Calling C: declarations, `extern` and a built-in `printf`
+
+SafeC calls C functions and uses C globals the way C does: by declaring them.
+clang links the C library automatically; other C code is passed to `safec`
+as `.c`, `.o`, `.a` or `.so` files (and libraries with `-l`/`-L`).
+
+```c
+int c_add(int a, int b);            // a function defined elsewhere: no body
+extern int c_sub(int, int);         // `extern` is optional on functions; names may be left out
+int c_log(char* fmt, ...);          // `...` after at least one named parameter
+extern int counter;                 // a global defined elsewhere
+
+int main() {
+    printf("%d\n", c_add(1, 2));   // printf needs no declaration
+    return 0;
+}
+```
+
+- `extern` is a keyword, as in C, so it can't be used as a name.
+- `printf` is built in as `int printf(char* fmt, ...)`, since SafeC has no
+  `#include`. Repeating that exact declaration is allowed; any other
+  declaration or a definition of `printf` is an error. Other C functions
+  (`puts`, `abs`, ...) need a declaration.
+- A function may be declared many times and defined at most once, and every
+  declaration must have the same type; the same goes for `extern` globals,
+  which can't have an initializer. `main` must be defined.
+- `...` is only for declaring C functions: a SafeC function can't be
+  variadic, because SafeC can't read the extra arguments. Extra arguments
+  can be numbers, strings, pointers, arrays and `null`, not structs; they are
+  passed as C passes them (`char` and `bool` as `int`, `float` as `double`).
+- A declaration is trusted like a SafeC signature: `own T*` means the C
+  function takes ownership (or hands it over, as a result), `T*` and `mut T*`
+  are borrows for the call. The borrow checker checks the SafeC side; the C
+  side must keep these promises. Memory C returns as `own` must come from
+  `malloc`/`calloc`, since `free` is C's `free`. Passing an owner to
+  `printf`'s `...` only reads it.
+- Calls follow the C calling convention of x86-64 Linux (System V), structs
+  passed by value included. Only C functions whose types SafeC can write
+  can be declared correctly: `int`, `char`, `bool`, `float`, pointers and
+  structs of these. Not `double` (most of `math.h`), `long`/`size_t`
+  (`strlen`, `malloc`), `unsigned`, `void*` or `FILE*`.
+
+Tests: `parser/pass/18_extern_declarations`, `sema/pass/extern_declarations`,
+`sema/fail/extern_declarations`, `borrowck/*/extern_calls`,
+`codegen/pass/printf_output`, `codegen/pass/case_study_list`,
+`interop/pass/safec_calls_c`.
+
 ## Grammar (EBNF)
 
 The grammar implemented by `src/parser.y`.  Terminals in quotes are
@@ -169,10 +216,11 @@ more.
 program               = { external_declaration } ;
 
 external_declaration  = struct_definition
-                      | function_definition
-                      | global_declaration ;
+                      | [ "extern" ] function_definition
+                      | [ "extern" ] function_declaration
+                      | [ "extern" ] global_declaration ;
 
-global_declaration    = declaration ;
+global_declaration    = declaration ;          (* with extern: no initializer *)
 
 pointer_qualifier     = "own" | "mut" | "raw" ;
 
@@ -199,16 +247,21 @@ declaration           = qualified_base
 declarator            = { pointer_level } identifier { array_suffix }
                         [ "=" assignment_expr ] ;
 
-function_definition   = qualified_base { pointer_level }
-                          identifier parameter_list
-                          compound_statement ;
+function_definition   = function_header compound_statement ;
+
+function_declaration  = function_header ";" ;  (* defined elsewhere, e.g. in C *)
+
+function_header       = qualified_base { pointer_level }
+                          identifier parameter_list ;
 
 parameter_list        = "(" [ parameters ] ")" ;
 
-parameters            = parameter { "," parameter } | "void" ;
+parameters            = parameter { "," parameter } [ "," "..." ]
+                      | "void" ;
 
 parameter             = qualified_base { pointer_level }
-                          identifier { array_suffix } ;
+                          [ identifier ] { array_suffix } ;
+                        (* a name may be left out only in a declaration *)
 
 compound_statement    = "{" { block_item } "}" ;
 
@@ -449,8 +502,11 @@ Shows every test, including passing tests.
 | Borrow checker | Whether ownership and borrowing rules are followed |
 | Codegen        | Whether generated LLVM IR is valid                 |
 | SafeC          | Whether compiled programs execute correctly        |
+| Interop        | Whether SafeC and C code linked together work      |
+| Driver         | Whether the command line (`-c`, `-S`, `-o`, `-l`) works |
 
-`--codegen` runs the code generation tests. `--safec` runs the complete suite.
+`--codegen` runs the code generation tests. With no stage flag (or `--driver`)
+the complete suite runs.
 
 The test runner exits with code 0 if all tests pass.
 
@@ -475,6 +531,15 @@ If a program is expected to exit with a non-zero value, use:
 ```c
 // expect-exit: N
 ```
+
+If a program must be stopped by a runtime check (an out-of-bounds index,
+overflow, division by zero), use `// expect-trap`.
+
+If `NAME.stdout` exists next to a codegen or interop test, what the program
+prints must match it exactly.
+
+An interop test is a pair: `NAME.safec`, built with `safec -c`, and `NAME.c`,
+which is linked with it.
 
 ### Error markers
 

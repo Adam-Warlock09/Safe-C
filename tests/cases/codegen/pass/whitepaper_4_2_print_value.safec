@@ -1,0 +1,20 @@
+// Whitepaper §4.2: a function that only reads takes a read borrow (T*); the
+// borrow can't be stored anywhere that outlives the call. Prints what
+// whitepaper_4_2_print_value.stdout holds.
+
+void print_value(int* x) {
+    printf("%d", *x);
+}
+
+int main() {
+    int local = 7;
+    print_value(&local);         // a read borrow of a local, for the call
+    printf("\n");
+
+    own int* p = new int;
+    *p = 42;
+    print_value(p);              // a read borrow of an owner; p is still the owner
+    printf("\n");
+    free(p);
+    return 0;
+}
