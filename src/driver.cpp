@@ -8,7 +8,8 @@
  *   --till-parser   print the AST
  *   --till-sema     run semantic + ownership checks, print diagnostics
  *   --emit-llvm, -S emit LLVM IR and stop (alias: --till-codegen)
- *                   written to -o, or <file>.ll next to the source
+ *                   written to -o, or <file>.ll next to the source;
+ *                   with -O1..-O3 it is the IR after LLVM's optimizer
  *   -c              compile to an object file, don't link
  *                   written to -o, or <file>.o next to the source
  *
@@ -256,6 +257,25 @@ static int run_program(const std::vector<std::string> &args) {
     return WEXITSTATUS(status);
 }
 
+// The optimization level asked for ("-O1".."-O3"; the last one wins, as in
+// clang), or "" for none or -O0
+static std::string optimization_level(const Options &opt) {
+    std::string level;
+    for (const std::string &f : opt.clang_flags)
+        if (f.compare(0, 2, "-O") == 0) level = f;
+    return level == "-O0" ? "" : level;
+}
+
+// Runs clang. Returns false (after reporting why) if it failed; clang prints
+// its own errors, and 127 means it couldn't be started at all
+static bool run_clang(const std::vector<std::string> &cmd, const std::string &what) {
+    int status = run_program(cmd);
+    if (status == 0) return true;
+    if (status > 0 && status != 127)
+        std::fprintf(stderr, "safec: clang failed (exit %d) while %s\n", status, what.c_str());
+    return false;
+}
+
 // Writes the program's LLVM IR to path. Returns false (after reporting why) on failure
 static bool write_ir(const safec::Program &prog, const char *file, const std::string &path) {
     {
@@ -340,8 +360,21 @@ int main(int argc, char **argv) {
     // ---- 4. Codegen: LLVM IR, kept only when it is what was asked for
     if (opt.till == CODEGEN) {
         std::string ir_path = opt.output.empty() ? strip_extension(file) + ".ll" : opt.output;
-        if (!write_ir(prog, file, ir_path)) return 1;
-        std::printf("OK: Successfully emitted %s\n", ir_path.c_str());
+        std::string level = optimization_level(opt);
+        if (level.empty()) {                    // the IR exactly as codegen made it
+            if (!write_ir(prog, file, ir_path)) return 1;
+            std::printf("OK: Successfully emitted %s\n", ir_path.c_str());
+            return 0;
+        }
+        // -O1..-O3: codegen's IR goes to a temporary file and LLVM's optimizer
+        // (run by clang, as for a binary) writes the optimized IR
+        TempFile unoptimized;
+        if (!make_temp_file(unoptimized, ".ll")) return 1;
+        if (!write_ir(prog, file, unoptimized.path)) return 1;
+        if (!run_clang({"clang", "-S", "-emit-llvm", level, unoptimized.path, "-o", ir_path},
+                       "optimizing the IR into " + ir_path))
+            return 1;
+        std::printf("OK: Successfully emitted %s (optimized with %s)\n", ir_path.c_str(), level.c_str());
         return 0;
     }
 
@@ -363,13 +396,7 @@ int main(int argc, char **argv) {
     cmd.push_back("-o");
     cmd.push_back(target);
 
-    int status = run_program(cmd);
-    if (status != 0) {
-        // clang has printed its own errors; 127 means it couldn't be started
-        if (status > 0 && status != 127)
-            std::fprintf(stderr, "safec: clang failed (exit %d) while building %s\n", status, target.c_str());
-        return 1;
-    }
+    if (!run_clang(cmd, "building " + target)) return 1;
 
     std::printf("OK: Successfully compiled %s -> %s\n", file, target.c_str());
     return 0;
