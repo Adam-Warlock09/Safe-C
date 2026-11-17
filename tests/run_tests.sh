@@ -28,7 +28,7 @@
 #              // error            any error on this line
 #            Case is ignored, and anything after " -- " is just a comment.
 #   codegen  safec --emit-llvm, then LLVM's verifier (opt -passes=verify) on
-#            the IR. pass: exit 0 and the IR verifies. fail: programs that
+#            the IR, with and without debug info (-g). pass: exit 0 and the IR verifies. fail: programs that
 #            pass sema but codegen must reject; nonzero exit, and the
 #            diagnostics match the markers, as in sema.
 #   safec    the same programs, built into an executable with safec and run.
@@ -258,6 +258,15 @@ case_codegen() {   # $1 = pass|fail, $2 = file
     fi
     if ! opt -passes=verify -disable-output "$TMP/prog.ll" > "$TMP/verify" 2>&1; then
         { echo "the generated LLVM IR is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
+        return 1
+    fi
+    # the same program with debug info (-g): the verifier also checks its rules
+    if ! "$COMPILER" -S -g "$TMP/prog.safec" -o "$TMP/prog_g.ll" > "$TMP/out" 2> "$TMP/err"; then
+        { echo "safec -S -g failed:"; head -5 "$TMP/err"; } > "$TMP/why"
+        return 1
+    fi
+    if ! opt -passes=verify -disable-output "$TMP/prog_g.ll" > "$TMP/verify" 2>&1; then
+        { echo "the LLVM IR with debug info (-g) is invalid:"; head -5 "$TMP/verify"; } > "$TMP/why"
         return 1
     fi
     return 0

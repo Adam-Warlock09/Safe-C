@@ -357,7 +357,8 @@ void CodeGen::emit_module_header() {
                     continue;
                 }
                 std::string init = vd->init ? const_init(vd->init.get()) : llvm_zero_init(vd->type);
-                out_ << "@" << vd->name << " = global " << t << " " << init << "\n";
+                out_ << "@" << vd->name << " = global " << t << " " << init
+                     << (debug_ ? debug_global(*vd) : "") << "\n";
             }
         }
     }
