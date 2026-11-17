@@ -245,6 +245,49 @@ std::string CodeGen::abi_param_list(const AbiSignature& sig, const FunctionType*
     return s;
 }
 
+// The IR types of the parameter list, without names or attributes: the
+// function type a variadic call has to spell out
+std::string CodeGen::abi_param_types(const AbiSignature& sig) const {
+    std::vector<std::string> types;
+    if (sig.ret.kind == AbiArg::Indirect) types.push_back("ptr");
+    for (const AbiArg& a : sig.params) {
+        switch (a.kind) {
+            case AbiArg::Direct:   types.push_back(a.ir_type); break;
+            case AbiArg::Coerce:   types.insert(types.end(), a.parts.begin(), a.parts.end()); break;
+            case AbiArg::Indirect: types.push_back("ptr"); break;
+            case AbiArg::Ignore:   break;
+        }
+    }
+    std::string s;
+    for (size_t i = 0; i < types.size(); ++i) s += (i ? ", " : "") + types[i];
+    return s;
+}
+
+// declare for a function defined elsewhere (in C): the same lowering as a
+// definition, so C's calling convention matches on both sides
+void CodeGen::emit_declare(const FunctionDecl& fn) {
+    const FunctionType* ft = fn.functionType();
+    AbiSignature sig = classify_signature(ft);
+    std::string params = abi_param_list(sig, ft, nullptr);
+    if (ft->isVariadic()) params += params.empty() ? "..." : ", ...";
+    out_ << "\ndeclare " << abi_return_type(sig) << " @" << fn.name << "(" << params << ")\n";
+}
+
+// An argument for '...', passed the way C passes it: char and bool widened to
+// int, float to double. Arrays (already a pointer to their first element),
+// pointers and null are pointers
+std::string CodeGen::promote_variadic_arg(const Type* t, const std::string& val) {
+    if (isa<ArrayType>(t)) return "ptr " + val;
+    std::string ty = llvm_type(t);
+    if (ty == "i1" || ty == "i8") return "i32 " + convert_int(val, ty, "i32");   // bool: zext, char: sext
+    if (ty == "float") {
+        std::string wide = new_temp();
+        emit(wide + " = fpext float " + val + " to double");
+        return "double " + wide;
+    }
+    return ty + " " + val;
+}
+
 // A stack slot of an ABI type (always 8-aligned: enough for every coerced
 // type and every SafeC struct)
 std::string CodeGen::temp_alloca_ir(const std::string& ir_type) {
@@ -334,9 +377,13 @@ std::string CodeGen::gen_call(const CallExpr* c) {
     // Arguments are evaluated left to right, each converted right after
     for (size_t i = 0; i < c->args.size(); ++i) {
         const Expr* arg = c->args[i].get();
+        std::string val = gen_expr(arg);
+        if (i >= ft->params().size()) {            // matches '...'
+            args.push_back(promote_variadic_arg(arg->type, val));
+            continue;
+        }
         const Type* pt = ft->params()[i];
         const AbiArg& a = sig.params[i];
-        std::string val = gen_expr(arg);
         switch (a.kind) {
             case AbiArg::Direct:
                 args.push_back(a.ir_type + (a.attr.empty() ? "" : " " + a.attr) + " " + val);
@@ -357,7 +404,14 @@ std::string CodeGen::gen_call(const CallExpr* c) {
         }
     }
 
-    std::string call = "call " + abi_return_type(sig) + " @" + fd->name + "(";
+    // A variadic call names the function type, "i32 (ptr, ...)": on x86-64 the
+    // callee is told how many float registers carry arguments only then
+    std::string fn_type;
+    if (ft->isVariadic()) {
+        std::string fixed = abi_param_types(sig);
+        fn_type = " (" + fixed + (fixed.empty() ? "..." : ", ...") + ")";
+    }
+    std::string call = "call " + abi_return_type(sig) + fn_type + " @" + fd->name + "(";
     for (size_t i = 0; i < args.size(); ++i) call += (i ? ", " : "") + args[i];
     call += ")";
 

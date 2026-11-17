@@ -26,10 +26,13 @@ void CodeGen::generate(const Program& prog) {
 
     emit_module_header();
 
-    // Iterate over all declarations looking for Functions with bodies
+    // Each definition, and a declare for each function defined elsewhere (in C,
+    // like printf). A function declared several times is declared once, by the
+    // declaration sema made canonical, and not at all if it is defined here
     for (const auto& d : prog_->decls) {
         if (auto* fn = dyn_cast<FunctionDecl>(d.get())) {
             if (fn->body) gen_function(*fn);
+            else if (fn->canonical == fn) emit_declare(*fn);
         }
     }
 
