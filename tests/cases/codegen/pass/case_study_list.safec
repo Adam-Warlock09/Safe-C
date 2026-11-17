@@ -1,13 +1,15 @@
-// The whitepaper's case study (section 6), a singly linked list, with what this
-// implementation changes (see README, "Differences from the whitepaper"):
+// The whitepaper's case study (section 6), a singly linked list, printing what
+// the whitepaper shows; case_study_list.stdout holds that output:
+//   3 2 1
+//   popped: 3
+//   2 1
+// What this implementation changes (README, "Differences from the whitepaper"):
 //   - struct types are written with `struct` (struct Node*, not Node*)
 //   - `int x = 0;` before `&mut x`: a variable must have a value before it is borrowed
 //   - the list is emptied in main and its nodes handed to nodes_free, instead of
 //     list_free(&mut list): the borrow checker can't see what a function did
 //     through a `mut` borrow, so it would report list.head as leaked
-//   - printf is replaced by checks: returns the number of the first failing check
-// The output the whitepaper shows, "3 2 1", "popped: 3", "2 1", is what list_sum
-// and x are checked against.
+// case_study_list_v0 is the earlier version, written before printf could be called.
 
 struct Node {
     int value;
@@ -25,8 +27,8 @@ struct List list_new() {
 // Mutates the list's head pointer, requiring a write borrow (mut List*).
 void list_push(mut struct List* list, int value) {
     own struct Node* n = new struct Node;
-    n->value    = value;
-    n->next     = list->head;   // Move: previous head chain now belongs to n->next
+    n->value = value;
+    n->next = list->head;       // Move: previous head chain now belongs to n->next
     list->head = n;             // Move: ownership of n transfers into list->head
 }
 
@@ -36,29 +38,29 @@ bool list_pop(mut struct List* list, mut int* out_value) {
 
     own struct Node* n = list->head;   // Move front node out (narrowed to non-null own Node*)
     list->head = n->next;       // Move remaining chain back into list->head
-    n->next     = null;         // Detach downstream ownership before freeing n
+    n->next = null;             // Detach downstream ownership before freeing n
     *out_value = n->value;      // Write result through mutable borrow out_value
     free(n);                    // Consume and deallocate the detached node n
     return true;
 }
 
 // Read-only traversal: takes an immutable read borrow (List*) and never alters ownership.
-int list_sum(struct List* list) {
-    int s = 0;
+void list_print(struct List* list) {
     struct Node*? cur = list->head;     // Nullable read borrow of the head node
-    while (cur != null) {        // Narrows cur to non-nullable Node* inside loop body
-        s = s * 10 + cur->value;
-        cur = cur->next;        // Advance read borrow to the next node
+    while (cur != null) {               // Narrows cur to non-nullable Node* inside loop body
+        printf("%d ", cur->value);
+        cur = cur->next;                // Advance read borrow to the next node
     }
-    return s;
+    printf("\n");
 }
 
-// Releases a chain of nodes it takes ownership of.
+// Releases a chain of nodes it takes ownership of (the whitepaper's list_free,
+// taking the chain itself instead of a write borrow of the list).
 void nodes_free(own struct Node*? cur) {
     while (cur != null) {
         own struct Node* n = cur;       // Move narrowed non-null node out of cur
-        cur         = n->next;          // Move remainder of the chain into cur
-        n->next     = null;             // Clear child owner before deallocation
+        cur = n->next;                  // Move remainder of the chain into cur
+        n->next = null;                 // Clear child owner before deallocation
         free(n);                        // Safely release current node
     }
 }
@@ -68,17 +70,15 @@ int main() {
     list_push(&mut list, 1);
     list_push(&mut list, 2);
     list_push(&mut list, 3);
-
-    int bad = 0;
-    if (list_sum(&list) != 321) bad = 1;    // was: list_print, outputs 3 2 1
+    list_print(&list);                  // Outputs: 3 2 1
 
     int x = 0;
     list_pop(&mut list, &mut x);
-    if (x != 3) bad = 2;                    // was: printf popped: 3
-    if (list_sum(&list) != 21) bad = 3;     // was: list_print, outputs 2 1
+    printf("popped: %d\n", x);          // Outputs: popped: 3
+    list_print(&list);                  // Outputs: 2 1
 
     own struct Node*? chain = list.head;    // take the nodes out of the list
     list.head = null;                       // the list is now visibly empty
     nodes_free(chain);                      // and hand them over to be freed
-    return bad;
+    return 0;
 }
