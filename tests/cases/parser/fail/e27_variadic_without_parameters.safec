@@ -1,0 +1,2 @@
+// '...' needs at least one named parameter before it, as in C (before C23)
+int log_all(...);

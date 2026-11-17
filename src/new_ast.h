@@ -262,15 +262,17 @@ class FunctionType : public Type {
 public:
     const Type *returnType() const { return ret_; }
     const std::vector<const Type *> &params() const { return params_; }
+    bool isVariadic() const { return variadic_; }   // `...` after params()
 
     static bool classof(const Type *t) { return t->kind() == TypeKind::Function; }
 
 private:
     friend class TypeContext;
-    FunctionType(const Type *ret, std::vector<const Type *> params)
-        : Type(TypeKind::Function), ret_(ret), params_(std::move(params)) {}
+    FunctionType(const Type *ret, std::vector<const Type *> params, bool variadic)
+        : Type(TypeKind::Function), ret_(ret), params_(std::move(params)), variadic_(variadic) {}
     const Type *ret_;
     std::vector<const Type *> params_;
+    bool variadic_;
 };
 
 /*
@@ -322,13 +324,14 @@ public:
         return slot.get();
     }
 
-    const FunctionType *functionType(const Type *ret, std::vector<const Type *> params) {
-        std::vector<const Type *> key;
-        key.reserve(params.size() + 1);
-        key.push_back(ret);
-        key.insert(key.end(), params.begin(), params.end());
-        auto &slot = functions_[key];
-        if (!slot) slot.reset(new FunctionType(ret, std::move(params)));
+    // f(int) and f(int, ...) are different types
+    const FunctionType *functionType(const Type *ret, std::vector<const Type *> params, bool variadic = false) {
+        std::vector<const Type *> types;
+        types.reserve(params.size() + 1);
+        types.push_back(ret);
+        types.insert(types.end(), params.begin(), params.end());
+        auto &slot = functions_[{types, variadic}];
+        if (!slot) slot.reset(new FunctionType(ret, std::move(params), variadic));
         return slot.get();
     }
 
@@ -337,7 +340,7 @@ private:
     std::map<std::tuple<const Type *, PtrKind, bool>, std::unique_ptr<PointerType>> pointers_;
     std::map<std::tuple<const Type *, bool, uint64_t>, std::unique_ptr<ArrayType>> arrays_;
     std::map<StructDecl *, std::unique_ptr<StructType>> structs_;
-    std::map<std::vector<const Type *>, std::unique_ptr<FunctionType>> functions_;
+    std::map<std::pair<std::vector<const Type *>, bool>, std::unique_ptr<FunctionType>> functions_;
 };
 
 // Defined after StructDecl (needs its name)
@@ -508,6 +511,10 @@ public:
     TypeSpecPtr typeSpec;
     ExprPtr init;            // may be null
     bool isGlobal;
+    bool isExtern = false;   // `extern int g;`: a global defined elsewhere (in C)
+    // [sema] for a global declared more than once (extern declarations and at
+    // most one definition): the one uses refer to, the definition if any
+    VarDecl *canonical = nullptr;
 
     static bool classof(const ASTNode *n) {
         return n->kind() == NodeKind::VarDecl || n->kind() == NodeKind::ParamDecl;
@@ -518,7 +525,8 @@ protected:
         : ValueDecl(k, l, std::move(n)), typeSpec(std::move(spec)), init(std::move(init)), isGlobal(isGlobal) {}
 };
 
-// param: qual_base ptrs IDENTIFIER arrays   (never has an init)
+// param: qual_base ptrs [IDENTIFIER] arrays   (never has an init; the name
+// may be left out in a declaration without a body: `int abs(int);`)
 class ParamDecl : public VarDecl {
 public:
     ParamDecl(SourceLoc l, std::string n, TypeSpecPtr spec)
@@ -527,7 +535,9 @@ public:
     SAFEC_CLASSOF_ONE(ParamDecl)
 };
 
-// func_def: qual_base ptrs IDENTIFIER '(' params ')' block
+// func_def:  [extern] qual_base ptrs IDENTIFIER '(' params ')' block
+// func_decl: [extern] qual_base ptrs IDENTIFIER '(' params ')' ';'
+// A func_decl has no body: the function is defined elsewhere, e.g. in C.
 // `f(void)` and `f()` both give an empty params list.
 class FunctionDecl : public ValueDecl {
 public:
@@ -537,7 +547,13 @@ public:
 
     TypeSpecPtr returnSpec;
     std::vector<std::unique_ptr<ParamDecl>> params;
-    std::unique_ptr<CompoundStmt> body;
+    std::unique_ptr<CompoundStmt> body;   // null for a declaration
+    bool isVariadic = false;              // `...` after the params: `int printf(char* fmt, ...)`
+    bool isExtern = false;                // written with `extern` (no effect on functions, as in C)
+    bool isBuiltin = false;               // declared by sema, not in the source (printf)
+    // [sema] a function may be declared several times and defined at most once:
+    // the declaration calls resolve to, the definition if there is one
+    FunctionDecl *canonical = nullptr;
 
     const FunctionType *functionType() const { return type ? cast<FunctionType>(type) : nullptr; }
 
@@ -1151,6 +1167,7 @@ inline std::string typeToString(const Type *t) {
         std::string out = typeToString(f->returnType()) + "(";
         for (size_t i = 0; i < f->params().size(); i++)
             out += (i ? ", " : "") + typeToString(f->params()[i]);
+        if (f->isVariadic()) out += f->params().empty() ? "..." : ", ...";
         return out + ")";
     }
     return "?";

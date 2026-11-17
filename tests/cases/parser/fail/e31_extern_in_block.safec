@@ -1,0 +1,5 @@
+// extern declarations are top-level only (no block-scope extern)
+int main() {
+    extern int counter;
+    return counter;
+}

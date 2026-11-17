@@ -446,6 +446,7 @@ namespace safec {
 	void Sema::run(Program& prog) {
 		
 		// Pass 1 : Global Collection
+		addBuiltins(prog);
 		collectGlobals(prog);
 
 		// Pass 2 : Struct Fields
@@ -453,6 +454,7 @@ namespace safec {
 
 		// Pass 3 : Signatures
 		resolveSignatures(prog);
+		checkRedeclarations();
 
 		// Pass 4 : Bodies
 		checkBodies(prog);
@@ -624,28 +626,98 @@ namespace safec {
 			} else if (auto* fd = dyn_cast<FunctionDecl>(decl.get())) {
 
 				auto [it, inserted] = globalNames.emplace(fd->name, fd);
-				if (!inserted) {
+				if (inserted) {
+					funs[fd->name] = fd;
+					continue;
+				}
+
+				// As in C, a function may be declared any number of times and
+				// defined once; calls go to the definition if there is one
+				auto* prev = dyn_cast<FunctionDecl>(it->second);
+				if (prev && prev->isBuiltin && fd->body) {
+					diag.error(fd->loc, "'" + fd->name + "' is C's " + fd->name + ", built into SafeC; it can't be defined");
+					fd->setInvalid();
+				} else if (prev && !(prev->body && fd->body)) {
+					redeclarations.push_back({prev, fd});
+					if (fd->body) {
+						it->second = fd;
+						funs[fd->name] = fd;
+					}
+				} else {
 					diag.error(fd->loc, "Duplicate global name: '" + fd->name + "'");
 					diag.note(it->second->loc, "Previous declaration is here");
 					fd->setInvalid();
-				} else {
-					funs[fd->name] = fd;
 				}
 
 			} else if (auto* vd = dyn_cast<VarDecl>(decl.get())) {
 
 				auto [it, inserted] = globalNames.emplace(vd->name, vd);
-				if (!inserted) {
+				if (inserted) continue;
+
+				// As in C, `extern int g;` may repeat, with at most one definition
+				auto* prev = dyn_cast<VarDecl>(it->second);
+				if (prev && (prev->isExtern || vd->isExtern)) {
+					redeclarations.push_back({prev, vd});
+					if (!vd->isExtern) it->second = vd;
+				} else {
 					diag.error(vd->loc, "Duplicate global name: '" + vd->name + "'");
 					diag.note(it->second->loc, "Previous declaration is here");
 					vd->setInvalid();
-				} else {
-					scope.declare(vd);
 				}
 
 			}
 		}
 
+		// Every declaration of a name refers to the same one: the definition if
+		// there is one, else the first declaration
+		for (auto& decl : prog.decls) {
+			auto* vdecl = dyn_cast<ValueDecl>(decl.get());
+			if (!vdecl || vdecl->isInvalid()) continue;
+			auto it = globalNames.find(vdecl->name);
+			if (it == globalNames.end()) continue;
+			if (auto* fd = dyn_cast<FunctionDecl>(vdecl)) fd->canonical = dyn_cast<FunctionDecl>(it->second);
+			if (auto* vd = dyn_cast<VarDecl>(vdecl)) vd->canonical = dyn_cast<VarDecl>(it->second);
+		}
+		for (auto& [name, d] : globalNames) {
+			if (auto* vd = dyn_cast<VarDecl>(d)) scope.declare(vd);
+		}
+
+		// main is where the program starts: it must be defined here
+		if (auto it = funs.find("main"); it != funs.end() && !it->second->body) {
+			diag.error(it->second->loc, "main() is declared but never defined");
+			it->second->setInvalid();
+		}
+
+	}
+
+	// int printf(char* fmt, ...): C's printf, available to every program
+	// without a declaration (SafeC has no #include)
+	void Sema::addBuiltins(Program& prog) {
+		auto fmtSpec = std::make_unique<TypeSpec>(SourceLoc(), BaseTypeKind::Char);
+		fmtSpec->pointers.push_back(PointerLevel{SourceLoc(), false});
+		std::vector<std::unique_ptr<ParamDecl>> params;
+		params.push_back(std::make_unique<ParamDecl>(SourceLoc(), "fmt", std::move(fmtSpec)));
+
+		auto printfDecl = std::make_unique<FunctionDecl>(SourceLoc(), "printf",
+			std::make_unique<TypeSpec>(SourceLoc(), BaseTypeKind::Int), std::move(params), nullptr);
+		printfDecl->isVariadic = true;
+		printfDecl->isBuiltin = true;
+		prog.decls.insert(prog.decls.begin(), std::move(printfDecl));
+	}
+
+	// Declarations of the same function or global must agree on its type
+	void Sema::checkRedeclarations() {
+		for (auto [prev, cur] : redeclarations) {
+			if (prev->isInvalid() || cur->isInvalid() || !prev->type || !cur->type) continue;
+			if (prev->type == cur->type) continue;   // types are unique: same signature, same Type
+
+			diag.error(cur->loc, "conflicting types for '" + cur->name + "': '" + typeToString(cur->type)
+				+ "' here, '" + typeToString(prev->type) + "' before");
+			auto* fd = dyn_cast<FunctionDecl>(prev);
+			if (fd && fd->isBuiltin) diag.note(cur->loc, "printf is built in as 'int printf(char* fmt, ...)'");
+			else diag.note(prev->loc, "Previous declaration is here");
+			cur->setInvalid();
+		}
 	}
 
 	void Sema::resolveStructFields(Program& prog) {
@@ -785,7 +857,16 @@ namespace safec {
 
 				for (auto& param : fd->params) {
 
-					auto [it, inserted] = paramNames.emplace(param->name, param.get());
+					// A declaration may leave parameter names out (`int abs(int);`);
+					// a definition uses them
+					if (param->name.empty() && fd->body) {
+						diag.error(param->loc, "a parameter of '" + fd->name + "' has no name: only a declaration without a body can leave names out");
+						param->setInvalid();
+						continue;
+					}
+					auto [it, inserted] = param->name.empty()
+						? std::make_pair(paramNames.end(), true)
+						: paramNames.emplace(param->name, param.get());
 					if (!inserted) {
 						diag.error(param->loc, "Duplicate parameter name: '" + param->name + "'");
 						diag.note(it->second->loc, "Previous declaration is here");
@@ -810,6 +891,13 @@ namespace safec {
 
 				}
 
+				// '...' only declares C functions such as printf: SafeC has no way to
+				// read the extra arguments, so its own functions can't be variadic
+				if (fd->isVariadic && fd->body) {
+					diag.error(fd->loc, "'" + fd->name + "' can't be variadic: '...' is only for declaring C functions, like printf");
+					fd->setInvalid();
+				}
+
 				// Verify main() signature constraints
 				if (fd->name == "main") {
 					if (retType && (retType->kind() != TypeKind::Builtin || cast<BuiltinType>(retType)->builtinKind() != BuiltinKind::Int)) {
@@ -824,7 +912,7 @@ namespace safec {
 				}
 
 				if (retType && paramTypes.size() == fd->params.size()) {
-					fd->type = prog.types.functionType(retType, std::move(paramTypes));
+					fd->type = prog.types.functionType(retType, std::move(paramTypes), fd->isVariadic);
 				} else {
 					fd->setInvalid();
 				}
@@ -832,6 +920,12 @@ namespace safec {
 			} else if (auto* vd = dyn_cast<VarDecl>(decl.get())) {
 
 				if (vd->isInvalid()) continue;
+
+				if (vd->isExtern && vd->init) {
+					diag.error(vd->loc, "extern variable '" + vd->name + "' can't have an initializer: it is defined elsewhere");
+					vd->setInvalid();
+					continue;
+				}
 
 				// Resolve variable type
 				const Type* varType = resolveType(vd->typeSpec.get(), prog, false);
@@ -1937,14 +2031,27 @@ namespace safec {
 		if (!expr || !fnType) return;
 
 		const auto& params = fnType->params();
-		if (expr->args.size() != params.size()) {
-			diag.error(expr->loc, "call expected " + std::to_string(params.size()) + " arguments, but received " + std::to_string(expr->args.size()));
+		bool variadic = fnType->isVariadic();
+		if (variadic ? expr->args.size() < params.size() : expr->args.size() != params.size()) {
+			diag.error(expr->loc, "call expected " + std::string(variadic ? "at least " : "") + std::to_string(params.size())
+				+ " arguments, but received " + std::to_string(expr->args.size()));
 			expr->setInvalid();
 			return;
 		}
 
-		for (size_t i = 0; i < expr->args.size(); ++i) {
+		for (size_t i = 0; i < params.size(); ++i) {
 			if (!coerce(expr->args[i], params[i])) {
+				expr->setInvalid();
+				return;
+			}
+		}
+
+		// The arguments matching '...' keep their own type; codegen applies C's
+		// promotions (char and bool to int, float to double)
+		FunctionDecl* callee = expr->directCallee();
+		for (size_t i = params.size(); i < expr->args.size(); ++i) {
+			checkVariadicArg(expr->args[i].get(), callee ? callee->name : "the function");
+			if (expr->args[i]->isInvalid()) {
 				expr->setInvalid();
 				return;
 			}
@@ -1953,6 +2060,23 @@ namespace safec {
 		expr->type = fnType->returnType();
 		expr->category = ValueCategory::RValue;
 
+	}
+
+	// An argument for '...': numbers, pointers (a string, an array as a pointer to
+	// its first element) and null can be passed to C; a struct or void can't
+	void Sema::checkVariadicArg(Expr* arg, const std::string& callee) {
+		if (!arg || arg->isInvalid() || !arg->type) return;
+		const Type* t = arg->type;
+		if (isa<StructType>(t)) {
+			diag.error(arg->loc, "a struct can't be passed to the '...' of '" + callee + "'; pass its fields");
+			arg->setInvalid();
+		} else if (auto* bt = dyn_cast<BuiltinType>(t); bt && bt->builtinKind() == BuiltinKind::Void) {
+			diag.error(arg->loc, "a void value can't be passed to the '...' of '" + callee + "'");
+			arg->setInvalid();
+		} else if (isa<FunctionType>(t)) {
+			diag.error(arg->loc, "a function can't be passed to the '...' of '" + callee + "'");
+			arg->setInvalid();
+		}
 	}
 
 	void Sema::checkNew(NewExpr* expr, const Type* allocatedType, TypeContext& types) {

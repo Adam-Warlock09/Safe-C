@@ -60,6 +60,7 @@ static int safec_lexer_current_column = 1;
 "free"          { if (safec_lexer_trace) printf("TOKEN: FREE_KEYWORD, NUMBER: %d\n", FREE_KEYWORD); return FREE_KEYWORD; }
 "defer"         { if (safec_lexer_trace) printf("TOKEN: DEFER_KEYWORD, NUMBER: %d\n", DEFER_KEYWORD); return DEFER_KEYWORD; }
 "null"          { if (safec_lexer_trace) printf("TOKEN: NULL_KEYWORD, NUMBER: %d\n", NULL_KEYWORD); return NULL_KEYWORD; }
+"extern"        { if (safec_lexer_trace) printf("TOKEN: EXTERN_KEYWORD, NUMBER: %d\n", EXTERN_KEYWORD); return EXTERN_KEYWORD; }
 
 "true"          { if (safec_lexer_trace) printf("TOKEN: BOOL_LITERAL, NUMBER: %d\n", BOOL_LITERAL); return BOOL_LITERAL; }
 "false"         { if (safec_lexer_trace) printf("TOKEN: BOOL_LITERAL, NUMBER: %d\n", BOOL_LITERAL); return BOOL_LITERAL; }

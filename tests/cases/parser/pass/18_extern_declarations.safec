@@ -1,0 +1,21 @@
+// Declarations of functions and globals defined elsewhere (in C), as in C:
+// a function header ending in ';' instead of a body, `extern` (optional on
+// functions), unnamed parameters, and '...' after the named parameters.
+
+int c_add(int a, int b);
+extern int c_sub(int a, int b);
+int c_abs(int);
+void c_fill(mut int* out, int n);
+own struct Node*? c_make_node(int value);
+int c_log(char* fmt, ...);
+extern int c_log2(char*, int, ...);
+void c_reset(void);
+void c_reset2();
+int c_sum(int xs[], int n);
+extern int counter;
+extern struct Node* shared_head, *shared_tail;
+extern int defined_here() { return 1; }
+
+struct Node {
+    int value;
+};

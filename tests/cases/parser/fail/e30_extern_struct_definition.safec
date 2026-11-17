@@ -1,0 +1,4 @@
+// extern applies to functions and global variables, not to struct definitions
+extern struct Node {
+    int value;
+};

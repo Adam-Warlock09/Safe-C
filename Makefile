@@ -36,10 +36,10 @@ lexer.o: lex.yy.c
 lexer-lib.o: lex.yy.c
 	$(CC) $(LEXCFLAGS) -DSAFEC_NO_LEXER_MAIN -c -o $@ lex.yy.c
 
-parser.tab.o: parser.tab.cpp
+parser.tab.o: parser.tab.cpp src/new_ast.h   # the parser builds the AST: rebuild when its classes change
 	$(CXX) $(YACCCFLAGS) -c -o $@ parser.tab.cpp
 
-sema.o: src/sema.cpp src/sema.h src/new_ast.h
+sema.o: src/sema.cpp src/sema.h src/new_ast.h src/borrowck.h
 	$(CXX) $(CXXFLAGS) -c -o $@ src/sema.cpp
 
 main_parser.o: src/main_parser.cpp parser.tab.hpp src/new_ast.h src/ast_dump.h src/sema.h
