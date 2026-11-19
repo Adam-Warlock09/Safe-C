@@ -1818,10 +1818,38 @@ namespace safec {
 
 		if (srcPtr && targetPtr) {
 
-			if (srcPtr->ptrKind() == PtrKind::Raw || targetPtr->ptrKind() == PtrKind::Raw) {
-				diag.error(expr->loc, "cannot implicitly convert to or from raw pointer type");
-				expr->setInvalid();
-				return false;
+			// Raw pointers . Any safe pointer converts to a raw one,
+			// anywhere, without moving or borrowing it (creating a raw pointer
+			// never invalidates an owner or freezes a borrow). Back from raw: only to
+			// a borrow (T*, mut T*) and only inside trusted, where the programmer
+			// vouches that the memory is valid. Never to own: an owner can't
+			// be made up, and free never takes a raw pointer
+			const bool fromRaw = srcPtr->ptrKind() == PtrKind::Raw;
+			const bool toRaw = targetPtr->ptrKind() == PtrKind::Raw;
+			if (fromRaw || toRaw) {
+				if (fromRaw && targetPtr->ptrKind() == PtrKind::Own) {
+					diag.error(expr->loc, "a raw pointer can't become an owning pointer '" + typeToString(targetType) + "', not even inside 'trusted'");
+					expr->setInvalid();
+					return false;
+				}
+				if (fromRaw && !toRaw && !isTrusted) {
+					diag.error(expr->loc, "converting raw pointer '" + typeToString(srcType) + "' to '" + typeToString(targetType) + "' is only allowed inside 'trusted' blocks");
+					expr->setInvalid();
+					return false;
+				}
+				if (srcPtr->isNullable() && !targetPtr->isNullable()) {
+					diag.error(expr->loc, "cannot implicitly convert nullable pointer '" + typeToString(srcType) + "' to non-nullable type '" + typeToString(targetType) + "'");
+					expr->setInvalid();
+					return false;
+				}
+				if (srcPtr->pointee() != targetPtr->pointee()) {
+					diag.error(expr->loc, "incompatible pointer types: '" + typeToString(srcType) + "' and '" + typeToString(targetType) + "'");
+					expr->setInvalid();
+					return false;
+				}
+				CastKind kind = (fromRaw && toRaw) ? CastKind::NonNullToNullable : CastKind::RawConversion;
+				expr = std::make_unique<ImplicitCastExpr>(kind, std::move(expr), targetType);
+				return true;
 			}
 
 			if (targetPtr->ptrKind() == PtrKind::Own && srcPtr->ptrKind() != PtrKind::Own) {

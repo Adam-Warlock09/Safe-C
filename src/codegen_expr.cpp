@@ -639,6 +639,7 @@ std::string CodeGen::gen_expr(const Expr* e) {
             case CastKind::NullToPointer:
             case CastKind::NonNullToNullable:
             case CastKind::Reborrow:
+            case CastKind::RawConversion:
                 return val;                         // same bits, only the static type changes
         }
         return val;

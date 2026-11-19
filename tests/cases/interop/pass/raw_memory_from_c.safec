@@ -1,0 +1,60 @@
+// Raw memory between C and SafeC: C owns a table of records and hands out raw
+// pointers into it; SafeC lends each record to safe code (a write borrow)
+// inside trusted. SafeC also hands its own array to C as a raw pointer.
+// The C side, raw_memory_from_c.c, has main and checks the results.
+
+struct Point { int x; int y; };
+
+extern raw struct Point* c_entity(int id);       // a pointer into C's table
+extern int c_entity_count();
+extern raw char*? c_find_name(int id);            // C's string, or null
+extern void c_fill(raw int* out, int n);          // C writes n ints
+
+// safe code: knows nothing about where the Point lives
+void clamp(mut struct Point* p, int max) {
+    if (p->x > max) { p->x = max; }
+    if (p->y > max) { p->y = max; }
+}
+
+int count_char(char* s, char wanted) {
+    int n = 0;
+    trusted {
+        raw char* at = s;                         // walk the string with raw arithmetic
+        while (*at != '\0') {
+            if (*at == wanted) { n++; }
+            at = at + 1;
+        }
+    }
+    return n;
+}
+
+int clamp_all(int max) {
+    for (int id = 0; id < c_entity_count(); id++) {
+        raw struct Point* r = c_entity(id);
+        trusted {
+            mut struct Point* p = r;              // raw -> write borrow
+            clamp(p, max);
+        }
+    }
+    return c_entity_count();
+}
+
+int names_with(int id, char wanted) {
+    raw char*? name = c_find_name(id);
+    if (name == null) { return -1; }
+    int n = 0;
+    trusted {
+        char* s = name;                           // raw -> read borrow
+        n = count_char(s, wanted);
+    }
+    return n;
+}
+
+int sum_filled() {
+    int data[5];
+    for (int i = 0; i < 5; i++) { data[i] = 0; }
+    c_fill(&mut data[0], 5);                      // SafeC's array, given to C as raw
+    int total = 0;
+    for (int i = 0; i < 5; i++) { total = total + data[i]; }
+    return total;
+}

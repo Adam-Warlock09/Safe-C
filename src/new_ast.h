@@ -1008,7 +1008,8 @@ enum class CastKind {
     ToBool,           // scalar used as a condition
     NullToPointer,    // null -> T*?
     NonNullToNullable,// T* -> T*?
-    Reborrow          // own/mut T* -> T* or own T* -> mut T* (borrow, not a move)
+    Reborrow,         // own/mut T* -> T* or own T* -> mut T* (borrow, not a move)
+    RawConversion     // safe -> raw T* (anywhere), raw -> T*/mut T* (in trusted): same address
 };
 
 class ImplicitCastExpr : public Expr {

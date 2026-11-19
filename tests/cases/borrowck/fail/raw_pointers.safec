@@ -1,0 +1,15 @@
+// A raw pointer is made from a live pointer: not from an owner that was moved
+// or freed. (Making one from a live owner moves nothing: sema/pass/raw_pointers.)
+
+void from_moved_owner() {
+    own int* p = new int;
+    own int* q = p;
+    raw int* r = p;                     // error: use of moved pointer 'p'
+    free(q);
+}
+
+void from_freed_owner() {
+    own int* p = new int;
+    free(p);
+    raw int* r = p;                     // error: use of 'p' after free
+}
