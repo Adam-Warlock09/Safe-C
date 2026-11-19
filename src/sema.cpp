@@ -254,6 +254,45 @@ namespace safec {
 		}
 
 		// Pre-scans an expression for assignments/increments to drop unsound loop narrowings
+		// Whether evaluating expr may change a field (a call, or a write through a
+		// field, *p or a[i]): then narrowings of field paths like list->head no
+		// longer hold, as forgetFieldNarrowing does while checking
+		bool mayChangeFields(const Expr* expr) {
+			if (!expr) return false;
+			switch (expr->kind()) {
+				case NodeKind::CallExpr:
+				case NodeKind::FreeExpr:
+					return true;
+				case NodeKind::AssignExpr: {
+					auto* ae = cast<AssignExpr>(expr);
+					return !isa<NameExpr>(unwrapImplicit(ae->target.get())) || mayChangeFields(ae->value.get());
+				}
+				case NodeKind::UnaryExpr: {
+					auto* ue = cast<UnaryExpr>(expr);
+					if (ue->isIncDec() && !isa<NameExpr>(unwrapImplicit(ue->operand.get()))) return true;
+					return mayChangeFields(ue->operand.get());
+				}
+				case NodeKind::BinaryExpr: {
+					auto* be = cast<BinaryExpr>(expr);
+					return mayChangeFields(be->lhs.get()) || mayChangeFields(be->rhs.get());
+				}
+				case NodeKind::IndexExpr: {
+					auto* ie = cast<IndexExpr>(expr);
+					return mayChangeFields(ie->base.get()) || mayChangeFields(ie->index.get());
+				}
+				case NodeKind::MemberExpr:
+					return mayChangeFields(cast<MemberExpr>(expr)->base.get());
+				case NodeKind::ImplicitCastExpr:
+					return mayChangeFields(cast<ImplicitCastExpr>(expr)->sub.get());
+				case NodeKind::CompoundLiteralExpr:
+					for (const auto& init : cast<CompoundLiteralExpr>(expr)->inits)
+						if (mayChangeFields(init.value.get())) return true;
+					return false;
+				default:
+					return false;
+			}
+		}
+
 		void dropAssignedInExpr(const Expr* expr, std::map<NarrowKey, const Type*>& narrowed) {
 			if (!expr) return;
 			switch (expr->kind()) {
@@ -1595,7 +1634,20 @@ namespace safec {
 				auto* be = cast<BinaryExpr>(expr);
 
 				checkExpr(be->lhs.get(), prog);
-				checkExpr(be->rhs.get(), prog);
+				if (be->isLogical() && !be->lhs->isInvalid() && be->lhs->type) {
+					// b in `a && b` only runs when a is true, in `a || b` when a is
+					// false: check it with what that proves (p != null && p->v)
+					auto before = narrowedVars;
+					applyNarrowing(be->lhs.get(), be->op == BinaryOp::LogAnd, prog.types);
+					checkExpr(be->rhs.get(), prog);
+					// afterwards (b may not have run): what held before and b left alone
+					std::map<NarrowKey, const Type*> after;
+					for (const auto& [key, type] : before)
+						if (narrowedVars.count(key)) after[key] = type;
+					narrowedVars = std::move(after);
+				} else {
+					checkExpr(be->rhs.get(), prog);
+				}
 				
 				if (be->lhs->isInvalid() || !be->lhs->type || be->rhs->isInvalid() || !be->rhs->type) {
 					be->setInvalid();
@@ -2671,20 +2723,56 @@ namespace safec {
 	}
 
 	void Sema::applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types) {
+		for (const auto& [key, type] : narrowingsWhen(cond, isTrueBranch, types)) narrowedVars[key] = type;
+	}
 
+	// The narrowings that hold where cond comes out as `truth`, through !, && and
+	// || at any depth, with the same rules as the borrow checker's refine:
+	//   !a:          a came out the other way
+	//   a && b true, a || b false: both sides came out `truth`
+	//   otherwise:   either a decided it (b never ran), or a came out the other
+	//                way and b decided it; only what both cases prove holds
+	// What a proves survives b only if b can't invalidate it (an assignment,
+	// &mut, ++, or for field paths a call or a write through a field)
+	std::map<NarrowKey, const Type*> Sema::narrowingsWhen(Expr* cond, bool truth, TypeContext& types) {
+
+		std::map<NarrowKey, const Type*> out;
 		cond = unwrapImplicit(cond);
-		if (!cond) return;
+		if (!cond) return out;
+
+		if (auto* u = dyn_cast<UnaryExpr>(cond); u && u->op == UnaryOp::Not)
+			return narrowingsWhen(u->operand.get(), !truth, types);
 
 		auto* bin = dyn_cast<BinaryExpr>(cond);
-		if (!bin) return;
+		if (!bin) return out;
+
+		if (bin->isLogical()) {
+			// what still holds from a after b has run
+			auto afterRhs = [&](std::map<NarrowKey, const Type*> fromLhs) {
+				dropAssignedInExpr(bin->rhs.get(), fromLhs);
+				if (mayChangeFields(bin->rhs.get()))
+					for (auto it = fromLhs.begin(); it != fromLhs.end(); )
+						it = it->first.fields.empty() ? std::next(it) : fromLhs.erase(it);
+				for (const auto& [key, type] : narrowingsWhen(bin->rhs.get(), truth, types)) fromLhs[key] = type;
+				return fromLhs;
+			};
+			const bool isAnd = bin->op == BinaryOp::LogAnd;
+			if (truth == isAnd) return afterRhs(narrowingsWhen(bin->lhs.get(), truth, types));
+
+			auto lhsDecided = narrowingsWhen(bin->lhs.get(), truth, types);
+			auto rhsDecided = afterRhs(narrowingsWhen(bin->lhs.get(), !truth, types));
+			for (const auto& [key, type] : lhsDecided)
+				if (rhsDecided.count(key)) out[key] = type;
+			return out;
+		}
 
 		bool isNe = (bin->op == BinaryOp::Ne);
 		bool isEq = (bin->op == BinaryOp::Eq);
-		if (!isNe && !isEq) return;
+		if (!isNe && !isEq) return out;
 
-		// Narrow on `p != null` in then-branch OR `p == null` in else-branch
-		bool shouldNarrow = (isNe && isTrueBranch) || (isEq && !isTrueBranch);
-		if (!shouldNarrow) return;
+		// Narrow on `p != null` when true OR `p == null` when false
+		bool shouldNarrow = (isNe && truth) || (isEq && !truth);
+		if (!shouldNarrow) return out;
 
 		Expr *lhsSub = unwrapImplicit(bin->lhs.get());
 		Expr *rhsSub = unwrapImplicit(bin->rhs.get());
@@ -2692,20 +2780,20 @@ namespace safec {
 		
 		// The side that isn't `null`: a variable, or a field path like list->head
 		Expr* other = isa<NullLiteral>(rhsSub) ? lhsSub : (isa<NullLiteral>(lhsSub) ? rhsSub : nullptr);
-		if (!other) return;
+		if (!other) return out;
 
 		auto key = narrowKeyOf(other);
-		if (!key) return;
+		if (!key) return out;
 
 		// The declared type, not a narrowed one
 		const Type* curType = key->fields.empty() ? key->root->type : key->fields.back()->type;
 
 		if (auto* ptrT = dyn_cast<PointerType>(curType)) {
 			if (ptrT->isNullable()) {
-				const Type* narrowed = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
-				narrowedVars[*key] = narrowed;
+				out[*key] = types.pointerTo(ptrT->pointee(), ptrT->ptrKind(), /*nullable=*/false);
 			}
 		}
+		return out;
 
 	}
 

@@ -1,0 +1,51 @@
+// Null checks combined with && and || in real code: the narrowing lets the
+// checks and uses sit in one condition, and && / || evaluate left to right,
+// stopping early, so the right side never runs with a null pointer.
+// Returns the number of the first check that fails, 0 if all pass.
+
+struct Node { int value; own struct Node*? next; };
+
+// the first node with value >= target, or -1
+int find_at_least(struct Node*? head, int target) {
+    struct Node*? cur = head;
+    while (cur != null && cur->value < target) {        // stops at null before reading value
+        cur = cur->next;
+    }
+    if (cur == null || cur->value < 0) { return -1; }   // the right side only runs when cur isn't null
+    return cur->value;
+}
+
+int second_value(struct Node*? head) {
+    if (head != null && head->next != null) { return head->next->value; }
+    return -1;
+}
+
+void free_chain(own struct Node*? cur) {
+    while (cur != null) {
+        own struct Node* n = cur;
+        cur = n->next;
+        n->next = null;
+        free(n);
+    }
+}
+
+int main() {
+    own struct Node* c = new struct Node;
+    c->value = 30;
+    own struct Node* b = new struct Node;
+    b->value = 20;
+    b->next = c;
+    own struct Node* a = new struct Node;
+    a->value = 10;
+    a->next = b;
+
+    int result = 0;
+    if (find_at_least(a, 15) != 20) { result = 1; }
+    if (find_at_least(a, 30) != 30) { result = 2; }
+    if (find_at_least(a, 31) != -1) { result = 3; }     // ran off the end: cur is null
+    if (find_at_least(null, 1) != -1) { result = 4; }
+    if (second_value(a) != 20) { result = 5; }
+    if (second_value(null) != -1) { result = 6; }
+    free_chain(a);
+    return result;
+}

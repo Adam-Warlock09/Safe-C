@@ -1,6 +1,6 @@
 // After `p != null &&`, the right-hand side may use p as non-null: it only runs
-// when p isn't null. Not implemented yet (listed in tests/known_bugs.txt).
-struct Node { int v; struct Node*? next; };
+// when p isn't null.
+struct Node { int v; own struct Node*? next; };
 
 int positive(struct Node*? p) {
     if (p != null && p->v > 0) {

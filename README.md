@@ -394,8 +394,6 @@ compiler reports).
 - Only C functions whose types SafeC can write can be declared (difference 8).
 - Errors and debug info have line numbers but no columns: the lexer doesn't
   track columns.
-- A null check inside `&&` (`p != null && p->v > 0`) doesn't narrow `p` yet
-  (`tests/known_bugs.txt`).
 
 ## Grammar (EBNF)
 

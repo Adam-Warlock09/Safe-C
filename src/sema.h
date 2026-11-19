@@ -116,6 +116,7 @@ namespace safec {
 
             // Phase 4: Basic Flow-Sensitive Narrowing
             void applyNarrowing(Expr* cond, bool isTrueBranch, TypeContext& types);
+            std::map<NarrowKey, const Type*> narrowingsWhen(Expr* cond, bool truth, TypeContext& types);
             void clearNarrowing(Expr* target);
             const Type* getNarrowedType(ValueDecl* decl, const Type* originalType);
             void forgetFieldNarrowing();
