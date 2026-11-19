@@ -1,0 +1,53 @@
+// Whitepaper 3.6: raw pointers and trusted. write_mmio_register is the
+// whitepaper's 3.6.3 example; here the "register" is an ordinary variable,
+// whose raw address is taken with &mut (3.6.2: creating a raw pointer is
+// unrestricted and doesn't borrow the variable). Inside trusted a raw pointer
+// can be dereferenced, offset, and lent to safe code as a borrow.
+// Returns the number of the first check that fails, 0 if all pass.
+
+void write_mmio_register(raw int* reg_addr, int command) {
+    trusted {
+        *reg_addr = command;    // Permitted: programmer vouches for address validity
+    }
+}
+
+int sum(int* a, int* b) { return *a + *b; }      // safe code
+void double_it(mut int* p) { *p = *p * 2; }
+
+int main() {
+    int cell = 0;
+    raw int* reg = &mut cell;
+    write_mmio_register(reg, 42);
+    if (cell != 42) return 1;
+    cell = 7;                                     // cell isn't borrowed by reg
+    int seen = 0;
+    trusted { seen = *reg; }
+    if (seen != 7) return 2;
+
+    int data[4];
+    data[0] = 1; data[1] = 2; data[2] = 3; data[3] = 4;
+    raw int* base = &mut data[0];
+    int total = 0;
+    trusted {
+        for (int i = 0; i < 4; i++) {
+            raw int* at = base + i;               // pointer arithmetic: raw, in trusted
+            total = total + *at;
+        }
+        int* first = base;                        // raw -> read borrow, lent to safe code
+        int* last = base + 3;
+        total = total * 100 + sum(first, last);
+        mut int* second = base + 1;               // raw -> write borrow
+        double_it(second);
+    }
+    if (total != 1005) return 3;
+    if (data[1] != 4) return 4;
+
+    own int* p = new int;
+    *p = 9;
+    raw int* alias = p;                           // p is not moved
+    int via_alias = 0;
+    trusted { via_alias = *alias; }
+    free(p);                                      // the owner frees it, as usual
+    if (via_alias != 9) return 5;
+    return 0;
+}

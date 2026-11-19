@@ -1,0 +1,62 @@
+// Raw pointers (whitepaper 3.6). Creating one is unrestricted (3.6.2): any
+// safe pointer converts to a raw one, anywhere, and the original is neither
+// moved nor borrowed. Inside trusted (3.6.3) a raw pointer can be used, and
+// lent to safe code as a borrow (T*, mut T*). It never becomes an owner.
+// The rejected forms are in sema/fail/raw_pointers.
+
+extern void c_fill(raw int* out, int n);          // a C function writing n ints
+extern raw char*? getenv(char* name);              // memory C owns, or null
+
+int read_value(int* p) { return *p; }
+void set_value(mut int* p, int v) { *p = v; }
+
+// creating raw pointers: from &mut, &, an owner, a nullable pointer
+void creating(int*? maybe) {
+    int x = 0;
+    raw int* from_mut = &mut x;
+    x = 1;                                          // x is not borrowed by from_mut
+    raw int* from_read = &x;
+
+    own int* p = new int;
+    raw int* from_owner = p;                        // p is not moved
+    *p = 5;                                         // so it is still usable
+    free(p);                                        // and freed as usual
+
+    raw int*? from_nullable = maybe;                // nullability is kept
+    raw int*? widened = from_mut;                   // raw T* -> raw T*?
+}
+
+// trusted: lending raw memory to safe code as a borrow
+int lending(raw int* r) {
+    int v = 0;
+    trusted {
+        int* reader = r;                            // raw -> read borrow
+        mut int* writer = r;                        // raw -> write borrow
+        set_value(writer, 7);
+        v = read_value(reader) + read_value(r);    // or straight into a call
+    }
+    return v;
+}
+
+// a nullable raw pointer: checked, then lent
+int checked(raw int*? r) {
+    int v = 0;
+    if (r != null) {
+        trusted {
+            int* p = r;
+            v = *p;
+        }
+    }
+    return v;
+}
+
+int main() {
+    int data[4];
+    data[0] = 0; data[1] = 0; data[2] = 0; data[3] = 0;
+    raw int* r = &mut data[0];
+    c_fill(r, 4);                                   // SafeC memory handed to C as raw
+    raw char*? home = getenv("HOME");
+    int total = data[3] + lending(r) + checked(r);   // raw int* passed as raw int*?
+    if (home != null) { total = total + 1; }
+    return total;
+}

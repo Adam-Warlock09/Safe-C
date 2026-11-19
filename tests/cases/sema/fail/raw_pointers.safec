@@ -1,0 +1,32 @@
+// What raw pointers can't do (whitepaper 3.6): become a safe pointer outside
+// trusted, ever become an owner, be freed, or drop nullability. Allowed uses
+// are in sema/pass/raw_pointers.
+
+void lend_outside_trusted(raw int* r) {
+    int* p = r;                         // error: only allowed inside 'trusted' blocks
+    mut int* m = r;                     // error: only allowed inside 'trusted' blocks
+}
+
+void make_an_owner(raw int* r) {
+    trusted {
+        own int* p = r;                 // error: can't become an owning pointer
+    }
+}
+
+void free_raw(raw int* r) {
+    trusted {
+        free(r);                        // error: 'free' requires an owning pointer
+    }
+}
+
+void nullability(int*? maybe, raw int*? r) {
+    raw int* q = maybe;                 // error: cannot implicitly convert nullable pointer
+    trusted {
+        int* p = r;                     // error: cannot implicitly convert nullable pointer
+    }
+}
+
+void wrong_pointee() {
+    char c = 'a';
+    raw int* r = &mut c;                // error: incompatible pointer types
+}

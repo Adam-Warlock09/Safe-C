@@ -79,15 +79,16 @@ file that is removed afterwards.
 ### Demos
 
 ```bash
-bash tests/demo/run_demo.sh          # all ten
+bash tests/demo/run_demo.sh          # all twelve
 bash tests/demo/run_demo.sh 06 09    # some of them
 ```
 
-Ten short programs in `tests/demo/` showing the main safety features and
+Twelve short programs in `tests/demo/` showing the main safety features and
 linking with C: use after free and double free (01), null safety (02), leaks
 (03) and `defer` (04), borrow rules (05), bounds (06) and overflow (07) checks
-at run time, the whitepaper's linked list (08), SafeC calling C (09) and C
-calling SafeC (10). For each, the script shows the command it runs and the
+at run time, the whitepaper's linked list (08), SafeC calling C (09), C
+calling SafeC (10), and raw pointers with `trusted`: memory owned by the C
+library (11) and memory shared with C (12). For each, the script shows the command it runs and the
 compiler's errors or the program's output, and says whether the demo behaved
 as described.
 
@@ -296,6 +297,44 @@ Tests: `parser/pass/18_extern_declarations`, `sema/pass/extern_declarations`,
 `codegen/pass/printf_output`, `codegen/pass/case_study_list`,
 `interop/pass/safec_calls_c`.
 
+### 9. Raw pointers: what `trusted` code may do with them
+
+The whitepaper says creating a raw pointer is unrestricted (3.6.2) and that
+`trusted` code must uphold SafeC's invariants (3.6.3). It doesn't say whether a
+raw pointer can become a safe one again, or be freed. We decided:
+
+```c
+int x = 0;
+raw int* r = &mut x;               // creating a raw pointer: anywhere, from any safe
+raw int* q = p;                    //   pointer; p (an owner) is not moved, x not borrowed
+
+trusted {
+    *r = 1;                        // dereference, ->, r + i, r[i]: only in trusted
+    int* reader = r;               // raw -> T* or mut T*: only in trusted, to lend
+    mut int* writer = r;           //   C's (or any raw) memory to ordinary safe code
+}
+int* outside = r;                  // error: only allowed inside 'trusted' blocks
+trusted { own int* o = r; }        // error: never raw -> own, not even in trusted
+trusted { free(r); }               // error: free only takes an owning pointer
+```
+
+- Raw to a borrow lets a `trusted` block check C's memory once and hand it to
+  safe functions, instead of writing everything with raw pointers. The
+  programmer vouches that the memory stays valid and isn't written through
+  two pointers at once (two `mut` borrows of it would also mislead the
+  optimizer).
+- Never raw to `own`, and no `free` on a raw pointer: a raw pointer made from
+  an owner doesn't move it, so freeing through the raw pointer would leave the
+  owner silently invalid, a double free the borrow checker couldn't see.
+  Memory C allocates for SafeC to free is declared as `own` instead
+  (difference 8): then the borrow checker makes sure it is freed.
+- Nullability is kept both ways: `raw T*?` becomes `T*?`, and a `T*?` can only
+  become a `raw T*?`.
+
+Tests: `sema/pass/raw_pointers`, `sema/fail/raw_pointers`,
+`borrowck/fail/raw_pointers`, `codegen/pass/whitepaper_3_6_raw_pointers`,
+`interop/pass/raw_memory_from_c`; demos 11 and 12.
+
 # The whitepaper's case study: a linked list (section 6)
 
 `tests/cases/codegen/pass/case_study_list.safec` is the whitepaper's
@@ -347,9 +386,6 @@ compiler reports).
 
 # Known limitations
 
-- A raw pointer can't yet be created from a safe one (`raw int* r = &mut x;`
-  is rejected); raw pointers can come from C functions. Section 3.6.2 says
-  creating one is unrestricted: this is still to be done.
 - Unsized array parameters (`int xs[]`) aren't bounds-checked: the length
   isn't known (difference 7).
 - The C calling convention is implemented for x86-64 Linux only. On other
