@@ -1,0 +1,36 @@
+// Demo 11: memory owned by the C library: raw pointers and trusted.
+//
+// getenv returns a pointer into the environment, which C owns: it may be NULL
+// and must never be freed. So SafeC declares it as `raw char*?`. After the null
+// check, a `trusted` block lends it to ordinary safe code as a `char*` borrow:
+// the one line where the programmer vouches "this C pointer is valid".
+// Outside trusted that conversion is a compile error, and free() never takes
+// a raw pointer, so C's memory can't be freed by mistake.
+// demo: run
+
+extern raw char*? getenv(char* name);
+
+// safe code: receives an ordinary borrow, doesn't know it came from C
+void show(char* name, char* value) {
+    printf("  %-8s = %s\n", name, value);
+}
+
+void show_variable(char* name) {
+    raw char*? value = getenv(name);
+    if (value == null) {
+        printf("  %-8s is not set\n", name);
+        return;
+    }
+    trusted {
+        char* text = value;                // raw -> read borrow: allowed only here
+        show(name, text);
+    }
+}
+
+int main() {
+    printf("environment variables, read through getenv:\n");
+    show_variable("HOME");
+    show_variable("SHELL");
+    show_variable("NOT_SET_ANYWHERE");
+    return 0;
+}

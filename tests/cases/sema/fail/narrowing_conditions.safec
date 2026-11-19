@@ -1,0 +1,61 @@
+// What a condition with !, && and || does NOT prove: each line uses a pointer
+// that may still be null. Accepted forms: sema/pass/narrowing_conditions.
+
+struct Node { int v; own struct Node*? next; };
+
+bool ready() { return true; }
+
+int or_proves_neither(struct Node*? p, struct Node*? q) {
+    if (p != null || q != null) {
+        return p->v;                                    // error: check for null first
+    }
+    return 0;
+}
+
+int rhs_of_or_runs_when_null(struct Node*? p) {
+    if (p != null || p->v > 0) { return 1; }            // error: check for null first
+    return 0;
+}
+
+int negated_check(struct Node*? p) {
+    if (!(p != null)) {
+        return p->v;                                    // error: check for null first
+    }
+    return 0;
+}
+
+int else_of_and(struct Node*? p, struct Node*? q) {
+    if (p != null && q != null) { return 0; }
+    return p->v;                                        // error: check for null first
+}
+
+int another_pointer(struct Node*? p, struct Node*? q) {
+    if (p != null && q->v > 0) { return 1; }            // error: check for null first
+    return 0;
+}
+
+int reassigned_on_the_right(struct Node*? p, struct Node*? q) {
+    if (p != null && (p = q) == q) {
+        return p->v;                                    // error: check for null first
+    }
+    return 0;
+}
+
+int only_one_side_checks(struct Node*? p) {
+    if ((p != null && p->v > 1) || p == null) {
+        return p->v;                                    // error: check for null first
+    }
+    return 0;
+}
+
+int field_after_a_call(struct Node*? p) {
+    if (p != null && p->next != null && ready()) {
+        return p->next->v;                              // error: check for null first
+    }
+    return 0;
+}
+
+int after_the_expression(struct Node*? p) {
+    bool positive = p != null && p->v > 0;
+    return p->v;                                        // error: check for null first
+}

@@ -1,0 +1,66 @@
+// Null checks narrow T*? to T* through !, && and || at any depth, the same
+// way the borrow checker reasons about them:
+//   the right side of `a && b` runs only when a is true, of `a || b` only
+//   when a is false; `a && b` true and `a || b` false mean both sides hold;
+//   !a flips a. The rejected forms are in sema/fail/narrowing_conditions.
+
+struct Node { int v; own struct Node*? next; };
+
+bool ready() { return true; }
+
+int rhs_of_and(struct Node*? p) {
+    if (p != null && p->v > 0) { return 1; }               // p checked on the left
+    return 0;
+}
+
+int rhs_of_or(struct Node*? p) {
+    if (p == null || p->v == 0) { return 0; }               // right side: p isn't null
+    return p->v;                                             // after: the if returned otherwise
+}
+
+int both_in_then(struct Node*? p, struct Node*? q) {
+    if (p != null && q != null) { return p->v + q->v; }
+    return 0;
+}
+
+int both_in_else(struct Node*? p, struct Node*? q) {
+    if (p == null || q == null) { return 0; } else { return p->v + q->v; }
+}
+
+int early_return_or(struct Node*? p, struct Node*? q) {
+    if (p == null || q == null) { return 0; }
+    return p->v + q->v;
+}
+
+int while_and(struct Node*? p) {
+    int n = 0;
+    while (p != null && p->v > 0) { n = n + p->v; p = null; }
+    return n;
+}
+
+int negations(struct Node*? p, struct Node*? q) {
+    int n = 0;
+    if (!(p == null)) { n = n + p->v; }
+    if (!(p == null || q == null)) { n = n + p->v + q->v; }  // De Morgan
+    if (!!(p != null)) { n = n + p->v; }
+    return n;
+}
+
+int nested(struct Node*? p, struct Node*? q) {
+    if (p != null && (q == null || q->v > p->v)) { return p->v; }
+    if ((p != null && p->v > 1) || (p != null && p->v < -1)) { return p->v; }   // p on both sides of ||
+    return 0;
+}
+
+int fields(struct Node*? p) {
+    if (p != null && p->next != null && p->next->v > 0) { return p->next->v; }
+    if (p != null && ready() && p->next != null) { return p->next->v; }   // field checked after the call
+    if (p != null && ready()) { return p->v; }                             // a variable survives a call
+    return 0;
+}
+
+int main() {
+    return rhs_of_and(null) + rhs_of_or(null) + both_in_then(null, null) + both_in_else(null, null)
+         + early_return_or(null, null) + while_and(null) + negations(null, null) + nested(null, null)
+         + fields(null);
+}

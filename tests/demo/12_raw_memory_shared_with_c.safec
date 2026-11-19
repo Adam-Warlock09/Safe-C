@@ -1,0 +1,45 @@
+// Demo 12: sharing memory with C through raw pointers.
+//
+// C owns a table of records and hands out raw pointers into it. SafeC lends
+// each record to a safe function as a write borrow (`mut struct Point*`) inside
+// trusted, so the clamping code itself is ordinary checked SafeC. The other
+// way, SafeC hands its own array to a C function as `raw int*`: creating a raw
+// pointer is allowed anywhere and doesn't borrow or move the array.
+// The C side is 12_raw_memory_shared_with_c.c.
+// demo: run
+
+struct Point { int x; int y; };
+
+extern raw struct Point* c_entity(int id);       // a pointer into C's table
+extern int c_entity_count();
+extern void c_print_table();
+extern void c_fill_squares(raw int* out, int n); // C writes n ints
+
+// safe code: works on any Point, wherever it lives
+void clamp(mut struct Point* p, int max) {
+    if (p->x > max) { p->x = max; }
+    if (p->y > max) { p->y = max; }
+}
+
+int main() {
+    printf("C's table before:\n");
+    c_print_table();
+    for (int id = 0; id < c_entity_count(); id++) {
+        raw struct Point* r = c_entity(id);
+        trusted {
+            mut struct Point* p = r;       // raw -> write borrow, lent to safe code
+            clamp(p, 100);
+        }
+    }
+    printf("after SafeC clamped every point to 100:\n");
+    c_print_table();
+
+    int squares[5];
+    for (int i = 0; i < 5; i++) { squares[i] = 0; }
+    raw int* out = &mut squares[0];        // SafeC's array, given to C
+    c_fill_squares(out, 5);
+    printf("squares filled in by C:");
+    for (int i = 0; i < 5; i++) { printf(" %d", squares[i]); }   // still checked indexing
+    printf("\n");
+    return 0;
+}

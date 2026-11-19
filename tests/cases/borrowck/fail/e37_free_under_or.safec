@@ -1,0 +1,7 @@
+// `p != null || go` can be true while p is null: no free without a check.
+
+void release(own int*? p, bool go) {
+    if (p != null || go) {
+        free(p);                   // error: 'p' may be null
+    }
+}

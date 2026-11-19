@@ -12,12 +12,10 @@ void borrow_to_own(int* p) {
     own int* q = p;                 // error: cannot implicitly convert to owning pointer
 }
 
-void borrow_to_raw(int* p) {
-    raw int* r = p;                 // error: to or from raw pointer
-}
+// (A borrow converts to a raw pointer anywhere: sema/pass/raw_pointers.)
 
 void raw_to_borrow(raw int* r) {
-    int* p = r;                     // error: to or from raw pointer
+    int* p = r;                     // error: only allowed inside 'trusted' blocks
 }
 
 void shared_to_mut(int* p) {
