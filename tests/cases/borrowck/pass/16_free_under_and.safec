@@ -1,0 +1,20 @@
+// free on a nullable owner after a null check combined with &&: sema and the
+// borrow checker both see that p isn't null there.
+
+void release(own int*? p, bool go) {
+    if (p != null && go) {
+        free(p);
+    } else {
+        if (p != null) { free(p); }
+    }
+}
+
+void release_unless(own int*? p, bool keep) {
+    if (p == null || keep) {
+        if (p != null) { free(p); }
+        return;
+    }
+    free(p);                       // p == null || keep was false: p isn't null
+}
+
+int main() { return 0; }
