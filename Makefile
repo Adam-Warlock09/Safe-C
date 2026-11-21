@@ -114,6 +114,10 @@ test-driver:
 test:
 	bash tests/run_tests.sh
 
+# crash fuzzing: N damaged programs (default 20000), see tests/fuzz/README.md
+fuzz:
+	bash tests/fuzz/run_fuzz.sh $(N) $(SEED)
+
 clean:
 	rm -f safec safec-parser lexer lexer.o lexer-lib.o lex.yy.c \
 	      parser.tab.o parser.tab.cpp parser.tab.hpp parser.tab.c parser.tab.h \
@@ -121,4 +125,4 @@ clean:
 	      driver driver.o borrowck.o codegen_expr.o codegen_stmt.o codegen_abi.o codegen_debug.o target_info.h \
 	      *.ll a.out *.out
 
-.PHONY: all test test-lexer test-parser test-sema test-ir test-codegen test-interop test-driver clean
+.PHONY: all test test-lexer test-parser test-sema test-ir test-codegen test-interop test-driver fuzz clean
