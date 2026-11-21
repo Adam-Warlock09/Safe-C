@@ -28,3 +28,7 @@ target_info.h
 # the compiler and object files the Makefile builds
 /safec
 *.o
+# crash fuzzing: the sanitizer build and the saved problems
+tests/fuzz/build/
+tests/fuzz/out/
+__pycache__/
