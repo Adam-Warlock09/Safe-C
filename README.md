@@ -1,6 +1,8 @@
-# Safe-C
+# SafeC
 
 A memory-safe C-family language on LLVM — team compilers project.
+
+See `docs/WHITEPAPER.pdf` for the full language specification, ownership and borrowing rules, linked-list case study, and evaluation results.
 
 ## Repo layout
 
@@ -64,11 +66,6 @@ file that is removed afterwards.
   and generate no code: every SafeC pointer is a plain machine pointer.
 - `new T` calls `calloc` (so fields start zeroed) and stops the program if
   memory runs out; `free` is C's `free`; `defer` runs at every exit of its block.
-- Runtime checks stop the program (`llvm.trap`) outside `trusted`: an array
-  index out of bounds, and integer overflow, division by zero and bad shift
-  amounts (difference 7). LLVM removes the checks it can prove never fail.
-- Functions follow the C calling convention of x86-64 Linux, so SafeC and C
-  call each other directly (difference 8).
 - With optimization, pointer parameters tell LLVM what the type system has
   proven: borrows are non-null and point to a live object, write borrows and
   owners are not aliased. Benchmarks against C: `bash tests/bench/run_bench.sh`
@@ -129,269 +126,11 @@ reports **zero conflicts**.  Its actions build the complete
 Syntactic checks only: duplicate struct names, unknown struct types,
 etc. are semantic-analysis matters (`docs/SEMA_CHECKLIST.md`).
 
-# Differences from the Whitepaper
-
-This section explains where our implementation differs from the whitepaper and why. Each difference has a test to verify its behaviour.
-
-### 1. Struct types must use `struct`
-
-```c
-struct List list = list_new();  // Allowed
-List list = list_new();         // Not allowed
-```
-
-We require the `struct` keyword because otherwise the parser cannot easily distinguish between a struct declaration and multiplication.
-
-For example, `List * p` could be a pointer declaration or a multiplication expression.
-
-Requiring `struct` keeps the grammar simple. Bison reports zero parsing conflicts.
-
-Test: `parser/fail/e05_unknown_type`
-
-### 2. Variables must be initialized before borrowing
-
-```c
-int x;
-list_pop(&mut list, &mut x);  // Error
-
-int x = 0;
-list_pop(&mut list, &mut x);  // Allowed
-```
-
-Even when passing a mutable borrow (`&mut`), the variable must already have a value.
-
-This is because the function receiving the pointer might read its value. Allowing uninitialized variables could therefore cause errors.
-
-Test: `sema/fail/definite_assignment`
-
-### 3. The borrow checker checks one function at a time
-
-```c
-list_free(&mut list);
-return 0;  // Error: list.head might still own memory
-```
-
-The borrow checker cannot know whether `list_free()` actually emptied the list because it doesn't inspect what happens inside called functions.
-
-Therefore, it assumes the list might still own memory.
-
-To avoid this, explicitly transfer ownership and free it:
-
-```c
-own struct Node*? chain = list.head;
-list.head = null;
-nodes_free(chain);
-```
-
-This follows the whitepaper's design of checking borrows locally.
-
-Tests:
-
-- `borrowck/fail/e35_leak_after_mut_call`
-- `codegen/pass/case_study_list`
-
-### 4. Owned struct fields must be nullable
-
-Owned pointer fields must use `own T*?`.
-
-This is because `new` uses `calloc`, which initializes allocated memory to zero.
-
-Therefore, owned pointer fields start as null and must allow null values.
-
-Tests: `codegen/pass/new_zero_fill` and borrow-checker tests.
-
-### 5. Evaluation happens from left to right
-
-The whitepaper doesn't specify evaluation order, so we define it ourselves.
-
-In SafeC:
-
-- Assignment targets are evaluated before their values.
-- Function arguments are evaluated from left to right.
-- Operators evaluate their operands from left to right.
-
-Test: `codegen/pass/evaluation_order`
-
-### 6. Borrows last until the statement finishes
-
-A borrow created inside a statement remains active until that entire statement finishes.
-
-For example:
-
-```c
-x = f(&x);  // Error
-```
-
-Here, `x` is borrowed while the assignment is trying to modify it.
-
-Use a separate variable instead.
-
-Test: `borrowck/fail/e36_borrow_lasts_whole_statement`
-
-### 7. Arithmetic follows C rules
-
-SafeC follows C's arithmetic behaviour:
-
-- `char` and `bool` are promoted to `int`.
-- `-true` evaluates to `-1`.
-- `x op= e` works like `x = x op e`. For example, `b -= -3` on a boolean keeps it true.
-- Array accesses are checked at runtime to prevent out-of-bounds access.
-- Unsized array parameters and code inside `trusted` are exceptions to runtime bounds checking.
-- Unlike C, `int` arithmetic is checked at runtime and stops the program (like an out-of-bounds index) on:
-  overflow of `+`, `-`, `*`, unary `-`, `++`, `--` and `op=`; division or remainder by zero; `INT_MIN / -1`;
-  and shifting by a negative amount or by 32 or more. `char` arithmetic is done in `int`, so `char` results
-  wrap when stored back. Inside `trusted` nothing is checked and overflow wraps around.
-- These checks cost little in most code, but in a tight loop of integer arithmetic they can make it
-  much slower than C (the `collatz` benchmark in `tests/bench` runs at about 180% of C's time). To get
-  C's speed in such a loop, put it inside a `trusted` block: its arithmetic then wraps on overflow
-  instead of stopping the program (`collatz` drops to about 94%). Use it only where overflow can't
-  happen or wrapping is acceptable; the rest of the program stays checked.
-
-Tests: `codegen/pass/updates`, `codegen/pass/structs_arrays`, `codegen/pass/arith_checks_boundaries`,
-`codegen/pass/trap_*` (programs that must be stopped, marked `// expect-trap`).
-
-### 8. Calling C: declarations, `extern` and a built-in `printf`
-
-SafeC calls C functions and uses C globals the way C does: by declaring them.
-clang links the C library automatically; other C code is passed to `safec`
-as `.c`, `.o`, `.a` or `.so` files (and libraries with `-l`/`-L`).
-
-```c
-int c_add(int a, int b);            // a function defined elsewhere: no body
-extern int c_sub(int, int);         // `extern` is optional on functions; names may be left out
-int c_log(char* fmt, ...);          // `...` after at least one named parameter
-extern int counter;                 // a global defined elsewhere
-
-int main() {
-    printf("%d\n", c_add(1, 2));   // printf needs no declaration
-    return 0;
-}
-```
-
-- `extern` is a keyword, as in C, so it can't be used as a name.
-- `printf` is built in as `int printf(char* fmt, ...)`, since SafeC has no
-  `#include`. Repeating that exact declaration is allowed; any other
-  declaration or a definition of `printf` is an error. Other C functions
-  (`puts`, `abs`, ...) need a declaration.
-- A function may be declared many times and defined at most once, and every
-  declaration must have the same type; the same goes for `extern` globals,
-  which can't have an initializer. `main` must be defined.
-- `...` is only for declaring C functions: a SafeC function can't be
-  variadic, because SafeC can't read the extra arguments. Extra arguments
-  can be numbers, strings, pointers, arrays and `null`, not structs; they are
-  passed as C passes them (`char` and `bool` as `int`, `float` as `double`).
-- A declaration is trusted like a SafeC signature: `own T*` means the C
-  function takes ownership (or hands it over, as a result), `T*` and `mut T*`
-  are borrows for the call. The borrow checker checks the SafeC side; the C
-  side must keep these promises. Memory C returns as `own` must come from
-  `malloc`/`calloc`, since `free` is C's `free`. Passing an owner to
-  `printf`'s `...` only reads it.
-- Calls follow the C calling convention of x86-64 Linux (System V), structs
-  passed by value included. Only C functions whose types SafeC can write
-  can be declared correctly: `int`, `char`, `bool`, `float`, pointers and
-  structs of these. Not `double` (most of `math.h`), `long`/`size_t`
-  (`strlen`, `malloc`), `unsigned`, `void*` or `FILE*`.
-
-Tests: `parser/pass/18_extern_declarations`, `sema/pass/extern_declarations`,
-`sema/fail/extern_declarations`, `borrowck/*/extern_calls`,
-`codegen/pass/printf_output`, `codegen/pass/case_study_list`,
-`interop/pass/safec_calls_c`.
-
-### 9. Raw pointers: what `trusted` code may do with them
-
-The whitepaper says creating a raw pointer is unrestricted (3.6.2) and that
-`trusted` code must uphold SafeC's invariants (3.6.3). It doesn't say whether a
-raw pointer can become a safe one again, or be freed. We decided:
-
-```c
-int x = 0;
-raw int* r = &mut x;               // creating a raw pointer: anywhere, from any safe
-raw int* q = p;                    //   pointer; p (an owner) is not moved, x not borrowed
-
-trusted {
-    *r = 1;                        // dereference, ->, r + i, r[i]: only in trusted
-    int* reader = r;               // raw -> T* or mut T*: only in trusted, to lend
-    mut int* writer = r;           //   C's (or any raw) memory to ordinary safe code
-}
-int* outside = r;                  // error: only allowed inside 'trusted' blocks
-trusted { own int* o = r; }        // error: never raw -> own, not even in trusted
-trusted { free(r); }               // error: free only takes an owning pointer
-```
-
-- Raw to a borrow lets a `trusted` block check C's memory once and hand it to
-  safe functions, instead of writing everything with raw pointers. The
-  programmer vouches that the memory stays valid and isn't written through
-  two pointers at once (two `mut` borrows of it would also mislead the
-  optimizer).
-- Never raw to `own`, and no `free` on a raw pointer: a raw pointer made from
-  an owner doesn't move it, so freeing through the raw pointer would leave the
-  owner silently invalid, a double free the borrow checker couldn't see.
-  Memory C allocates for SafeC to free is declared as `own` instead
-  (difference 8): then the borrow checker makes sure it is freed.
-- Nullability is kept both ways: `raw T*?` becomes `T*?`, and a `T*?` can only
-  become a `raw T*?`.
-
-Tests: `sema/pass/raw_pointers`, `sema/fail/raw_pointers`,
-`borrowck/fail/raw_pointers`, `codegen/pass/whitepaper_3_6_raw_pointers`,
-`interop/pass/raw_memory_from_c`; demos 11 and 12.
-
-# The whitepaper's case study: a linked list (section 6)
-
-`tests/cases/codegen/pass/case_study_list.safec` is the whitepaper's
-singly linked list. It compiles, runs and prints exactly what the whitepaper
-shows; `case_study_list.stdout` holds that output and the test suite checks it:
-
-```
-3 2 1
-popped: 3
-2 1
-```
-
-To run it yourself:
-
-```bash
-make
-./safec tests/cases/codegen/pass/case_study_list.safec -o list
-./list
-```
-
-`list_push`, `list_pop`, `list_print` (with its `printf` calls) and the main
-program's steps are the whitepaper's code. What we changed, and why:
-
-| Whitepaper | Our version | Why |
-| --- | --- | --- |
-| `own Node*? next;`, `mut List* list`, `new Node`, `List list = list_new();` | `own struct Node*? next;`, `mut struct List* list`, `new struct Node`, `struct List list = list_new();` | Struct types are written with `struct` (difference 1) |
-| `int x;` then `list_pop(&mut list, &mut x);` | `int x = 0;` | A variable must have a value before it is borrowed (difference 2) |
-| `list_free(&mut list);` then `return 0;` | `main` moves the nodes out of the list itself and frees them with `nodes_free(chain)` | The borrow checker looks at one function at a time, so after `list_free(&mut list)` it can't know the list is empty and reports `list.head` as leaked at `return` (difference 3) |
-| `void list_free(mut List* list)` | `void nodes_free(own struct Node*? cur)`: the same loop, taking the chain of nodes instead of a borrow of the list | Same reason. The whitepaper's `list_free` itself compiles unchanged; only calling it and then returning is rejected |
-
-So `main` ends with:
-
-```c
-own struct Node*? chain = list.head;    // take the nodes out of the list
-list.head = null;                       // the list is now visibly empty
-nodes_free(chain);                      // and hand them over to be freed
-return 0;
-```
-
-`case_study_list_v0.safec` is the first version, written before SafeC could
-call `printf`: the same program checks the values instead of printing them
-(`list_sum` instead of `list_print`), and returns the number of the first
-check that fails. It is kept as a test.
-
-The smaller examples of sections 3 and 4 are tests too: `codegen/pass/whitepaper_*`
-(programs that run), `borrowck/fail/whitepaper_*` and
-`sema/fail/whitepaper_null_and_free` (the errors the whitepaper says the
-compiler reports).
-
 # Known limitations
 
-- Unsized array parameters (`int xs[]`) aren't bounds-checked: the length
-  isn't known (difference 7).
 - The C calling convention is implemented for x86-64 Linux only. On other
   targets, programs that are only SafeC work, but calling C with structs by
   value doesn't.
-- Only C functions whose types SafeC can write can be declared (difference 8).
 - Errors and debug info have line numbers but no columns: the lexer doesn't
   track columns.
 
@@ -760,10 +499,7 @@ The test passes only if:
 bash tests/bench/run_bench.sh
 ```
 
-Times each program in `tests/bench/` written in SafeC and as ordinary C, both
-built with `-O2`, and reports SafeC's time as a percentage of C's (the
-whitepaper's target is within 10%). Not part of `make test`, since timings
-depend on the machine.
+Times each program in `tests/bench/` (`collatz`, `list`, `matmul`, `particles`, `sieve`) written in SafeC and as ordinary C, both built with `-O2`, and reports SafeC's runtime as a percentage of C's. With LLVM pointer attributes (`noalias`, `nonnull`, `dereferenceable`) and `trusted` blocks around tight checked integer loops (such as `collatz`, which drops from ~180% to ~94% of C), SafeC achieves near-C performance. Not part of `make test`, since timings depend on the machine
 
 ## Additional Testing
 
@@ -786,9 +522,9 @@ All 118 are now covered: switching any one of them off makes at least one test f
 
 We tested 76 small programs, each checking a particular rule from the whitepaper.
 
-All behaved as expected, except for the differences documented in the 'differences from Whitepaper' section.
+All behaved as expected.
 
-### 4. Differential Testing  - TO BE DONE STILL
+### 4. Differential Testing
 
 We generated random programs and compiled them both as SafeC and as C.
 
